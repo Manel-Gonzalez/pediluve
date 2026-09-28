@@ -53,7 +53,7 @@ Everything runs on `localhost`. No deployment in v1.
 
 ## Roadmap
 
-- [ ] **Phase 0 — Setup**: repo structure, WebSocket echo, Supabase tables
+- [x] **Phase 0 — Setup**: repo structure, WebSocket echo, Supabase tables
 - [ ] **Phase 1 — Audio streaming**: mic → chunks → STT → text on screen
 - [ ] **Phase 2 — Translation**: target language selector, DeepL, side-by-side view
 - [ ] **Phase 3 — History**: list past sessions, re-translate a session to another language

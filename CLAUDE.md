@@ -100,4 +100,4 @@ Don't ask, just do:
 
 ## Current status
 
-Phase 0 — not started. First task: create the skeleton above, get the WebSocket echo working, apply the Supabase migration.
+Phase 0 — done. Repo skeleton in place, WebSocket echo verified end-to-end (frontend ↔ backend), Supabase migration applied. Next: Phase 1 (audio streaming).
