@@ -22,6 +22,10 @@ def _patch_transport(monkeypatch, transport):
         kwargs["transport"] = transport
         return real_async_client(*args, **kwargs)
 
+    # translate() caches a module-level client (see deepl._get_client) - reset it
+    # so each test starts from a clean, freshly-faked client instead of reusing
+    # whatever a previous test cached.
+    monkeypatch.setattr(deepl, "_client", None)
     monkeypatch.setattr(deepl.httpx, "AsyncClient", fake_async_client)
     monkeypatch.setenv("DEEPL_API_KEY", "test-key:fx")
 
@@ -62,3 +66,16 @@ async def test_translate_raises_on_a_deepl_error_response(monkeypatch):
 
     with pytest.raises(httpx.HTTPStatusError):
         await deepl.translate("hello", "es")
+
+
+async def test_get_client_reuses_the_same_instance_across_calls(monkeypatch):
+    monkeypatch.setattr(deepl, "_client", None)
+    first = deepl._get_client()
+    second = deepl._get_client()
+    assert first is second
+
+
+async def test_translate_reuses_the_client_across_calls(fake_transport):
+    await deepl.translate("hello", "es")
+    await deepl.translate("hello again", "es")
+    assert deepl._get_client() is deepl._get_client()

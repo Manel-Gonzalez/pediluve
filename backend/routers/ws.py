@@ -11,6 +11,7 @@ from models.messages import (
     ErrorMessage,
     PartialTranscript,
     SetTargetLanguage,
+    StartTranscription,
     Transcript,
 )
 from services import deepl, supabase
@@ -31,6 +32,8 @@ class ConnectionHandler:
         self.sequence = 0
         self.source_language: str | None = None
         self.target_language: str | None = None
+        self.transcript_queue: asyncio.Queue[str] | None = None
+        self.transcript_worker_task: asyncio.Task | None = None
 
     async def send(self, payload: dict) -> None:
         async with self.send_lock:
@@ -90,6 +93,13 @@ class ConnectionHandler:
             except ValidationError as exc:
                 await self.send(ErrorMessage(message=f"Invalid message: {exc}").model_dump())
                 return
+            if request.target_language not in deepl.SUPPORTED_TARGET_LANGUAGES:
+                await self.send(
+                    ErrorMessage(
+                        message=f"Unsupported target language: {request.target_language}"
+                    ).model_dump()
+                )
+                return
             self.target_language = request.target_language
             return
 
@@ -99,15 +109,20 @@ class ConnectionHandler:
         if self.stt_session is not None:
             return
 
-        audio_format = data.get("audio_format", "pcm_16000")
+        try:
+            request = StartTranscription.model_validate(data)
+        except ValidationError as exc:
+            await self.send(ErrorMessage(message=f"Invalid message: {exc}").model_dump())
+            return
+
         # Captured for display/persistence (KAN-6) and a future Phase-3 re-translation
         # use. Not yet passed to RealtimeTranscriptionSession.connect(): whether
         # scribe_v2_realtime even accepts a language hint is unconfirmed (see
         # docs/decisions.md) - not something to guess at on an external API.
-        self.source_language = data.get("source_language")
+        self.source_language = request.source_language
         session = RealtimeTranscriptionSession()
         try:
-            await session.connect(audio_format=audio_format)
+            await session.connect(audio_format=request.audio_format)
         except Exception as exc:
             await self.send(ErrorMessage(message=f"Could not start transcription: {exc}").model_dump())
             return
@@ -120,16 +135,28 @@ class ConnectionHandler:
             logger.exception("Could not create Supabase session")
             self.db_session_id = None
 
+        # Committed transcripts are queued rather than awaited inline here, so a
+        # slow (or slow-to-fail) DeepL call can't stall relaying the next partial/
+        # committed event off the ElevenLabs connection. A single worker drains the
+        # queue in order, which keeps sequence numbers and message order correct.
+        self.transcript_queue = asyncio.Queue()
         self.relay_task = asyncio.create_task(self._relay_transcripts(session))
+        self.transcript_worker_task = asyncio.create_task(self._process_transcript_queue())
 
     async def _stop_transcription(self) -> None:
         if self.stt_session is not None:
             await self.stt_session.close()
         if self.relay_task is not None:
             await self.relay_task
+        if self.transcript_queue is not None:
+            await self.transcript_queue.join()
+        if self.transcript_worker_task is not None:
+            self.transcript_worker_task.cancel()
         await self._end_db_session()
         self.stt_session = None
         self.relay_task = None
+        self.transcript_queue = None
+        self.transcript_worker_task = None
 
     async def _relay_transcripts(self, session: RealtimeTranscriptionSession) -> None:
         async for event in session.events():
@@ -137,13 +164,21 @@ class ConnectionHandler:
             if event_type == "partial_transcript":
                 await self.send(PartialTranscript(text=event["text"]).model_dump())
             elif event_type == "committed_transcript":
-                await self._handle_committed_transcript(event["text"])
+                await self.transcript_queue.put(event["text"])
             elif event_type in ("session_started", "warning", "edited_transcript"):
                 logger.info("ElevenLabs event: %s", event)
             elif "error" in event:
                 await self.send(ErrorMessage(message=str(event["error"])).model_dump())
             else:
                 logger.warning("Unhandled ElevenLabs event: %s", event)
+
+    async def _process_transcript_queue(self) -> None:
+        while True:
+            text = await self.transcript_queue.get()
+            try:
+                await self._handle_committed_transcript(text)
+            finally:
+                self.transcript_queue.task_done()
 
     async def _handle_committed_transcript(self, text: str) -> None:
         # Captured before the DeepL await, not re-read after it resolves: a
@@ -186,6 +221,8 @@ class ConnectionHandler:
             await self.stt_session.close()
         if self.relay_task is not None:
             self.relay_task.cancel()
+        if self.transcript_worker_task is not None:
+            self.transcript_worker_task.cancel()
         await self._end_db_session()
 
 

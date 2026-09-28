@@ -19,16 +19,28 @@ _TARGET_LANGUAGE_CODES = {
     "de": "DE",
 }
 
+# The UI-facing codes callers (routers/ws.py) may accept from a client. Kept as a
+# public name derived from the mapping above so there is one source of truth.
+SUPPORTED_TARGET_LANGUAGES = frozenset(_TARGET_LANGUAGE_CODES)
+
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(timeout=10.0)
+    return _client
+
 
 async def translate(text: str, target_language: str) -> str:
     deepl_code = _TARGET_LANGUAGE_CODES.get(target_language, target_language.upper())
     api_key = os.environ["DEEPL_API_KEY"]
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            DEEPL_API_URL,
-            headers={"Authorization": f"DeepL-Auth-Key {api_key}"},
-            data={"text": text, "target_lang": deepl_code},
-            timeout=10.0,
-        )
-        response.raise_for_status()
-        return response.json()["translations"][0]["text"]
+    client = _get_client()
+    response = await client.post(
+        DEEPL_API_URL,
+        headers={"Authorization": f"DeepL-Auth-Key {api_key}"},
+        data={"text": text, "target_lang": deepl_code},
+    )
+    response.raise_for_status()
+    return response.json()["translations"][0]["text"]

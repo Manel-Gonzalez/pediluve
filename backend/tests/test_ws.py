@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -320,3 +322,71 @@ async def test_committed_transcript_uses_the_target_language_captured_at_dispatc
     assert sent[0]["target_language"] == "es"
     assert sent[0]["translated_text"] == "[es] hello"
     assert handler.target_language == "fr"
+
+
+def test_translation_does_not_block_relaying_further_events(monkeypatch):
+    async def slow_translate(text, target_language):
+        await asyncio.sleep(0.2)
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", slow_translate)
+
+    canned = [
+        {"message_type": "committed_transcript", "text": "hello"},
+        {"message_type": "partial_transcript", "text": "world in progress"},
+    ]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+        ws.send_json({"type": "start_transcription"})
+        # Queued right after the slow committed_transcript - must not wait for
+        # that translation to resolve first.
+        assert ws.receive_json() == {"type": "partial_transcript", "text": "world in progress"}
+        assert ws.receive_json() == {
+            "type": "transcript",
+            "original_text": "hello",
+            "translated_text": "[es] hello",
+            "target_language": "es",
+        }
+        ws.send_json({"type": "stop_transcription"})
+
+
+def test_start_transcription_with_an_invalid_payload_returns_error_and_does_not_start(monkeypatch):
+    fake_cls = make_fake_session_class([])
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "start_transcription", "source_language": {"bad": "shape"}})
+        error = ws.receive_json()
+        assert error["type"] == "error"
+
+        ws.send_json({"type": "message", "text": "still alive"})
+        assert ws.receive_json() == {"type": "echo", "text": "still alive"}
+
+    assert fake_cls.instances == []
+
+
+def test_set_target_language_rejects_an_unsupported_code(monkeypatch):
+    async def unexpected_translate(text, target_language):
+        raise AssertionError("should not translate with a rejected target language")
+
+    monkeypatch.setattr("routers.ws.deepl.translate", unexpected_translate)
+    canned = [{"message_type": "committed_transcript", "text": "hello"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "set_target_language", "target_language": "xx"})
+        error = ws.receive_json()
+        assert error["type"] == "error"
+
+        ws.send_json({"type": "start_transcription"})
+        assert ws.receive_json() == {
+            "type": "transcript",
+            "original_text": "hello",
+            "translated_text": None,
+            "target_language": None,
+        }
+        ws.send_json({"type": "stop_transcription"})
