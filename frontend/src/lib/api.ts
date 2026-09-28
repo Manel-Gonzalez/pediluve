@@ -3,5 +3,5 @@ export function getWebSocketUrl(): string {
 }
 
 export function getChunkDurationMs(): number {
-  return Number(import.meta.env.VITE_CHUNK_DURATION_MS) || 2000
+  return Number(import.meta.env.VITE_CHUNK_DURATION_MS) || 250
 }

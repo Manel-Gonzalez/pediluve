@@ -2,25 +2,24 @@ import { useState, type FormEvent } from 'react'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useMicrophone } from './hooks/useMicrophone'
 import { getChunkDurationMs } from './lib/api'
-import type { ServerMessage } from './lib/types'
+import type { LogMessage } from './lib/types'
 import './App.css'
 
-function describeMessage(message: ServerMessage): string {
-  switch (message.type) {
-    case 'echo':
-      return message.text
-    case 'error':
-      return message.message
-    case 'partial_transcript':
-      return `… ${message.text}`
-    case 'transcript':
-      return message.text
-  }
+function describeMessage(message: LogMessage): string {
+  return message.type === 'echo' ? message.text : message.message
 }
 
 function App() {
-  const { status, messages, sendMessage, sendAudioChunk, startTranscription, stopTranscription } =
-    useWebSocket()
+  const {
+    status,
+    messages,
+    partialTranscript,
+    transcriptLines,
+    sendMessage,
+    sendAudioChunk,
+    startTranscription,
+    stopTranscription,
+  } = useWebSocket()
   const { status: micStatus, start, stop } = useMicrophone(sendAudioChunk, getChunkDurationMs())
   const [text, setText] = useState('')
 
@@ -62,6 +61,13 @@ function App() {
         ) : (
           <button onClick={handleStartRecording}>Start recording</button>
         )}
+      </div>
+
+      <div className="transcript">
+        {transcriptLines.map((line, index) => (
+          <p key={index}>{line}</p>
+        ))}
+        {partialTranscript && <p className="partial">{partialTranscript}</p>}
       </div>
 
       <ul>

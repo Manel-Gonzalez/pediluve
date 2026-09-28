@@ -23,4 +23,6 @@ export type TranscriptMessage = {
   text: string
 }
 
-export type ServerMessage = EchoMessage | ErrorMessage | PartialTranscriptMessage | TranscriptMessage
+export type LogMessage = EchoMessage | ErrorMessage
+
+export type ServerMessage = LogMessage | PartialTranscriptMessage | TranscriptMessage

@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getWebSocketUrl } from '../lib/api'
-import type { ServerMessage } from '../lib/types'
+import type { LogMessage, ServerMessage } from '../lib/types'
 
 type ConnectionStatus = 'connecting' | 'open' | 'closed'
 
 export function useWebSocket() {
   const socketRef = useRef<WebSocket | null>(null)
   const [status, setStatus] = useState<ConnectionStatus>('connecting')
-  const [messages, setMessages] = useState<ServerMessage[]>([])
+  const [messages, setMessages] = useState<LogMessage[]>([])
+  const [partialTranscript, setPartialTranscript] = useState('')
+  const [transcriptLines, setTranscriptLines] = useState<string[]>([])
 
   useEffect(() => {
     const socket = new WebSocket(getWebSocketUrl())
@@ -22,6 +24,16 @@ export function useWebSocket() {
     socket.onmessage = (event) => {
       if (socketRef.current !== socket) return
       const data = JSON.parse(event.data) as ServerMessage
+
+      if (data.type === 'partial_transcript') {
+        setPartialTranscript(data.text)
+        return
+      }
+      if (data.type === 'transcript') {
+        setTranscriptLines((prev) => [...prev, data.text])
+        setPartialTranscript('')
+        return
+      }
       setMessages((prev) => [...prev, data])
     }
 
@@ -46,5 +58,14 @@ export function useWebSocket() {
     socketRef.current?.send(JSON.stringify({ type: 'stop_transcription' }))
   }, [])
 
-  return { status, messages, sendMessage, sendAudioChunk, startTranscription, stopTranscription }
+  return {
+    status,
+    messages,
+    partialTranscript,
+    transcriptLines,
+    sendMessage,
+    sendAudioChunk,
+    startTranscription,
+    stopTranscription,
+  }
 }
