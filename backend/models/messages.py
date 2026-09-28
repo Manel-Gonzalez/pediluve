@@ -8,6 +8,15 @@ class ClientMessage(BaseModel):
     text: str
 
 
+class StartTranscription(BaseModel):
+    type: Literal["start_transcription"] = "start_transcription"
+    audio_format: str = "pcm_16000"
+
+
+class StopTranscription(BaseModel):
+    type: Literal["stop_transcription"] = "stop_transcription"
+
+
 class EchoMessage(BaseModel):
     type: Literal["echo"] = "echo"
     text: str
@@ -18,6 +27,11 @@ class ErrorMessage(BaseModel):
     message: str
 
 
-class AudioChunkReceived(BaseModel):
-    type: Literal["audio_chunk_received"] = "audio_chunk_received"
-    bytes: int
+class PartialTranscript(BaseModel):
+    type: Literal["partial_transcript"] = "partial_transcript"
+    text: str
+
+
+class Transcript(BaseModel):
+    type: Literal["transcript"] = "transcript"
+    text: str

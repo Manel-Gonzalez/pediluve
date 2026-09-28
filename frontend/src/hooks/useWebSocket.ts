@@ -32,9 +32,19 @@ export function useWebSocket() {
     socketRef.current?.send(JSON.stringify({ type: 'message', text }))
   }, [])
 
-  const sendAudioChunk = useCallback((chunk: Blob) => {
+  const sendAudioChunk = useCallback((chunk: ArrayBuffer) => {
     socketRef.current?.send(chunk)
   }, [])
 
-  return { status, messages, sendMessage, sendAudioChunk }
+  const startTranscription = useCallback((sampleRate: number) => {
+    socketRef.current?.send(
+      JSON.stringify({ type: 'start_transcription', audio_format: `pcm_${sampleRate}` }),
+    )
+  }, [])
+
+  const stopTranscription = useCallback(() => {
+    socketRef.current?.send(JSON.stringify({ type: 'stop_transcription' }))
+  }, [])
+
+  return { status, messages, sendMessage, sendAudioChunk, startTranscription, stopTranscription }
 }

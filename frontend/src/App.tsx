@@ -11,13 +11,16 @@ function describeMessage(message: ServerMessage): string {
       return message.text
     case 'error':
       return message.message
-    case 'audio_chunk_received':
-      return `🎤 chunk received: ${message.bytes} bytes`
+    case 'partial_transcript':
+      return `… ${message.text}`
+    case 'transcript':
+      return message.text
   }
 }
 
 function App() {
-  const { status, messages, sendMessage, sendAudioChunk } = useWebSocket()
+  const { status, messages, sendMessage, sendAudioChunk, startTranscription, stopTranscription } =
+    useWebSocket()
   const { status: micStatus, start, stop } = useMicrophone(sendAudioChunk, getChunkDurationMs())
   const [text, setText] = useState('')
 
@@ -26,6 +29,16 @@ function App() {
     if (!text.trim()) return
     sendMessage(text)
     setText('')
+  }
+
+  const handleStartRecording = async () => {
+    const sampleRate = await start()
+    if (sampleRate !== null) startTranscription(sampleRate)
+  }
+
+  const handleStopRecording = () => {
+    stop()
+    stopTranscription()
   }
 
   return (
@@ -45,9 +58,9 @@ function App() {
       <div className="mic">
         <p>Microphone status: {micStatus}</p>
         {micStatus === 'recording' ? (
-          <button onClick={stop}>Stop recording</button>
+          <button onClick={handleStopRecording}>Stop recording</button>
         ) : (
-          <button onClick={start}>Start recording</button>
+          <button onClick={handleStartRecording}>Start recording</button>
         )}
       </div>
 

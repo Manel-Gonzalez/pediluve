@@ -22,14 +22,16 @@ Why each choice was made. Update this when something changes.
 
 **Revisit in Phase 5:** add an optional "context mode" using Claude with the last N messages as context. Compare quality vs latency.
 
-## Real-time: 2s chunks over WebSocket, not streaming STT
+## Real-time: ElevenLabs realtime streaming STT, not REST batch chunks
 
-**Chosen:** Browser sends 2-second audio chunks; backend processes each one and pushes text back.
-**Alternative:** ElevenLabs WebSocket streaming STT (word-by-word).
+**Chosen (reversed from the original plan):** browser streams raw PCM continuously; backend proxies it to ElevenLabs' realtime WebSocket (`scribe_v2_realtime`) and relays `partial_transcript`/`committed_transcript` events back.
+**Original plan (Phase 0):** browser sends 2-second WebM chunks; backend converts each to WAV and calls the REST batch endpoint (`scribe_v2`) per chunk.
 
-**Why:** Simpler to build and debug. The 2-3s delay is acceptable for a conversation aid (it's what the original system did too). Streaming STT is billed by connection time and is harder to get right.
+**Why the reversal:** the original REST-per-chunk plan was explicitly meant to be replaced by realtime streaming in Phase 5 anyway (see `CLAUDE.md`'s old phase gates) — building it twice made no sense. Doing realtime now also let us validate that the WebSocket actually carries the audio format ElevenLabs expects, and it matches the project's original motivation (a genuinely real-time simultaneous-translation tool) far better than word-delayed 2-3s chunks.
 
-**Revisit in Phase 5.**
+**Trade-off accepted:** realtime STT has **no diarization** (confirmed against the live API docs — the realtime config has no `diarize`/`num_speakers` params, only the REST batch endpoint does). If speaker separation becomes important, we'd need `use_multi_channel` (one audio channel per speaker) or fall back to REST batch for that specific need. Also more implementation complexity: raw PCM capture requires `AudioWorklet` instead of the simpler `MediaRecorder`, and the backend has to manage two concurrent WebSocket connections (browser ↔ backend ↔ ElevenLabs) instead of one-shot REST calls.
+
+**Confirmed working (2026-09-28):** backend connects to ElevenLabs with the API key, gets `session_started` back with the right config, and the start/stop lifecycle doesn't leak connections or crash on disconnect. Not yet tested with real speech — only synthetic silence so far (correctly produces no transcript, since VAD found no speech).
 
 ## Persistence: Supabase over local SQLite
 

@@ -1,3 +1,4 @@
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -7,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from routers.ws import router as ws_router
 
 load_dotenv()
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="Pédiluve")
 

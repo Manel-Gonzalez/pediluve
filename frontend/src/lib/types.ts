@@ -13,9 +13,14 @@ export type ErrorMessage = {
   message: string
 }
 
-export type AudioAckMessage = {
-  type: 'audio_chunk_received'
-  bytes: number
+export type PartialTranscriptMessage = {
+  type: 'partial_transcript'
+  text: string
 }
 
-export type ServerMessage = EchoMessage | ErrorMessage | AudioAckMessage
+export type TranscriptMessage = {
+  type: 'transcript'
+  text: string
+}
+
+export type ServerMessage = EchoMessage | ErrorMessage | PartialTranscriptMessage | TranscriptMessage
