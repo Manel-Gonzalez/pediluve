@@ -51,3 +51,14 @@ Why each choice was made. Update this when something changes.
 **Alternative:** Next.js
 
 **Why:** No need for SSR or routing in v1 — it's a single-page tool. Vite's dev server is faster. Less boilerplate. Next.js would be overkill here.
+
+## Future: production deploy on AWS (not started, notes for later)
+
+**If this ever needs to run in production:**
+
+- **Backend: ECS Fargate, not Lambda.** The WebSocket connection stays open while audio chunks stream in. Lambda + API Gateway WebSocket would mean every message is a separate invocation, with connection state pushed into DynamoDB between them — a lot of rearchitecting for a project this size. Fargate keeps the current always-on FastAPI process model.
+- **DB: RDS Postgres instead of Supabase.** Same schema, same SQL migrations in `supabase/migrations/`, just a different connection string. No need for DynamoDB or Aurora.
+- **Frontend: S3 + CloudFront**, built as a static Vite bundle, fully decoupled from the backend.
+- **Repo stays a monorepo.** Two GitHub Actions workflows with path filters (`frontend/**`, `backend/**`) build and deploy each side independently — no need to split into separate repos for this.
+
+**Revisit:** only if/when an actual deploy is planned. Phase 0-5 stay local-only per `CLAUDE.md`.
