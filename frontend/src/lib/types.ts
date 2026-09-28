@@ -13,4 +13,16 @@ export type ErrorMessage = {
   message: string
 }
 
-export type ServerMessage = EchoMessage | ErrorMessage
+export type PartialTranscriptMessage = {
+  type: 'partial_transcript'
+  text: string
+}
+
+export type TranscriptMessage = {
+  type: 'transcript'
+  text: string
+}
+
+export type LogMessage = EchoMessage | ErrorMessage
+
+export type ServerMessage = LogMessage | PartialTranscriptMessage | TranscriptMessage
