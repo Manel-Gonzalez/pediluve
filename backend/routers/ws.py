@@ -5,8 +5,15 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
-from models.messages import ClientMessage, EchoMessage, ErrorMessage, PartialTranscript, Transcript
-from services import supabase
+from models.messages import (
+    ClientMessage,
+    EchoMessage,
+    ErrorMessage,
+    PartialTranscript,
+    SetTargetLanguage,
+    Transcript,
+)
+from services import deepl, supabase
 from services.elevenlabs import RealtimeTranscriptionSession
 
 logger = logging.getLogger(__name__)
@@ -22,6 +29,8 @@ class ConnectionHandler:
         self.relay_task: asyncio.Task | None = None
         self.db_session_id: str | None = None
         self.sequence = 0
+        self.source_language: str | None = None
+        self.target_language: str | None = None
 
     async def send(self, payload: dict) -> None:
         async with self.send_lock:
@@ -75,6 +84,15 @@ class ConnectionHandler:
             await self._stop_transcription()
             return
 
+        if msg_type == "set_target_language":
+            try:
+                request = SetTargetLanguage.model_validate(data)
+            except ValidationError as exc:
+                await self.send(ErrorMessage(message=f"Invalid message: {exc}").model_dump())
+                return
+            self.target_language = request.target_language
+            return
+
         await self.send(ErrorMessage(message=f"Unknown message type: {msg_type}").model_dump())
 
     async def _start_transcription(self, data: dict) -> None:
@@ -82,6 +100,11 @@ class ConnectionHandler:
             return
 
         audio_format = data.get("audio_format", "pcm_16000")
+        # Captured for display/persistence (KAN-6) and a future Phase-3 re-translation
+        # use. Not yet passed to RealtimeTranscriptionSession.connect(): whether
+        # scribe_v2_realtime even accepts a language hint is unconfirmed (see
+        # docs/decisions.md) - not something to guess at on an external API.
+        self.source_language = data.get("source_language")
         session = RealtimeTranscriptionSession()
         try:
             await session.connect(audio_format=audio_format)
@@ -123,7 +146,24 @@ class ConnectionHandler:
                 logger.warning("Unhandled ElevenLabs event: %s", event)
 
     async def _handle_committed_transcript(self, text: str) -> None:
-        await self.send(Transcript(text=text).model_dump())
+        # Captured before the DeepL await, not re-read after it resolves: a
+        # set_target_language arriving while this translation is in flight must not
+        # reassign it to the wrong language.
+        target_language = self.target_language
+        translated_text: str | None = None
+        if target_language is not None:
+            try:
+                translated_text = await deepl.translate(text, target_language)
+            except Exception:
+                logger.exception("Could not translate transcript")
+
+        await self.send(
+            Transcript(
+                original_text=text,
+                translated_text=translated_text,
+                target_language=target_language,
+            ).model_dump()
+        )
         if self.db_session_id is None:
             return
         try:

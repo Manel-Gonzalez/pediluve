@@ -33,6 +33,34 @@ Why each choice was made. Update this when something changes.
 
 **Confirmed working (2026-09-28):** backend connects to ElevenLabs with the API key, gets `session_started` back with the right config, and the start/stop lifecycle doesn't leak connections or crash on disconnect. Not yet tested with real speech — only synthetic silence so far (correctly produces no transcript, since VAD found no speech).
 
+## Phase 2: source_language not yet threaded into ElevenLabs, DeepL target-code mapping
+
+**Context:** KAN-5 (DeepL integration + WebSocket contract) added a `source_language`
+field to `start_transcription` and a `set_target_language` message. `source_language`
+is parsed and stored on `ConnectionHandler` (for KAN-6 persistence and a future
+Phase-3 re-translation use) but is **not** passed to
+`RealtimeTranscriptionSession.connect()` yet.
+
+**Why:** whether ElevenLabs' `scribe_v2_realtime` realtime endpoint accepts a
+language-hint parameter at all is unconfirmed — `elevenlabs.io`/`api.elevenlabs.io`
+are unreachable from the cloud sandbox this was built in (org network policy blocks
+them), the same way `api-free.deepl.com` is. Guessing at an unverified query
+parameter on an external realtime API risked silently breaking the STT connection.
+
+**Revisit:** confirm from a machine with real network access, the same way the
+no-diarization decision above was confirmed (live docs or the `session_started`
+event payload). If a language-hint param exists, thread `source_language` through
+in `services/elevenlabs.py::connect()`. If not, it stays a label used for
+display/persistence only.
+
+**Also unverified (same network restriction):** whether DeepL's `/v2/translate`
+actually supports `CA` (Catalan) as a `target_lang` — `services/deepl.py`'s
+`_TARGET_LANGUAGE_CODES` maps it optimistically. If DeepL rejects it, `translate()`
+raises, which the WebSocket handler already treats as a per-message translation
+failure (logged, `translated_text` stays null) rather than a crash — so this doesn't
+block KAN-5, but Catalan-target translation may not actually work until confirmed
+against DeepL's real supported-language list.
+
 ## Persistence: Supabase over local SQLite
 
 **Chosen:** Supabase (hosted PostgreSQL)
