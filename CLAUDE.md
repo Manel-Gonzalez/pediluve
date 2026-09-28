@@ -101,4 +101,4 @@ Don't ask, just do:
 
 ## Current status
 
-Phase 0 — done. Phase 1 in progress on branch `phase-1-audio`: mic capture (`AudioWorklet`, raw PCM) → backend proxy → ElevenLabs realtime STT confirmed working end-to-end with real speech (partial + committed transcripts rendering correctly in the UI, no duplicate lines, low latency). Backend tests (`pytest`, 12 passing) and frontend tests (`vitest`, 4 passing) set up; going forward, new features follow spec → test → implementation. Not yet done: Supabase persistence of committed transcripts.
+Phase 1 — done, merged to `main`. Mic capture (`AudioWorklet`, raw PCM) → backend proxy → ElevenLabs realtime STT → committed transcripts persisted to Supabase (`sessions`/`messages`), verified end-to-end with real speech and real data in the database. `sessions.target_language` gets a placeholder (`"en"`) until Phase 2 adds the real selector. Backend tests (`pytest`, 22 passing) and frontend tests (`vitest`, 4 passing). Next: Phase 2 (language selector, DeepL translation, two-column view) on a new branch, `phase-2-translation`.

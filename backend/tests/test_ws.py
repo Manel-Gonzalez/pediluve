@@ -1,8 +1,34 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from main import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def fake_supabase(monkeypatch):
+    state = {"sessions": {}, "messages": []}
+    counter = {"n": 0}
+
+    async def fake_create_session(target_language="en"):
+        counter["n"] += 1
+        session_id = f"session-{counter['n']}"
+        state["sessions"][session_id] = {"target_language": target_language, "ended_at": None}
+        return session_id
+
+    async def fake_save_message(session_id, sequence, original_text):
+        state["messages"].append(
+            {"session_id": session_id, "sequence": sequence, "original_text": original_text}
+        )
+
+    async def fake_end_session(session_id):
+        state["sessions"][session_id]["ended_at"] = "now"
+
+    monkeypatch.setattr("routers.ws.supabase.create_session", fake_create_session)
+    monkeypatch.setattr("routers.ws.supabase.save_message", fake_save_message)
+    monkeypatch.setattr("routers.ws.supabase.end_session", fake_end_session)
+    return state
 
 
 def make_fake_session_class(canned_events):
@@ -109,3 +135,77 @@ def test_duplicate_start_transcription_is_ignored(monkeypatch):
         assert ws.receive_json() == {"type": "echo", "text": "ok"}
 
     assert len(fake_cls.instances) == 1
+
+
+def test_start_transcription_creates_a_supabase_session(monkeypatch, fake_supabase):
+    fake_cls = make_fake_session_class([])
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "start_transcription"})
+        ws.send_json({"type": "stop_transcription"})
+
+    assert len(fake_supabase["sessions"]) == 1
+
+
+def test_committed_transcripts_are_saved_with_incrementing_sequence(monkeypatch, fake_supabase):
+    canned = [
+        {"message_type": "committed_transcript", "text": "hello"},
+        {"message_type": "committed_transcript", "text": "world"},
+    ]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "start_transcription"})
+        ws.receive_json()
+        ws.receive_json()
+        ws.send_json({"type": "stop_transcription"})
+
+    assert [m["sequence"] for m in fake_supabase["messages"]] == [0, 1]
+    assert [m["original_text"] for m in fake_supabase["messages"]] == ["hello", "world"]
+    session_id = next(iter(fake_supabase["sessions"]))
+    assert all(m["session_id"] == session_id for m in fake_supabase["messages"])
+
+
+def test_partial_transcripts_are_not_persisted(monkeypatch, fake_supabase):
+    canned = [{"message_type": "partial_transcript", "text": "hel"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "start_transcription"})
+        ws.receive_json()
+        ws.send_json({"type": "stop_transcription"})
+
+    assert fake_supabase["messages"] == []
+
+
+def test_stop_transcription_marks_the_session_ended(monkeypatch, fake_supabase):
+    fake_cls = make_fake_session_class([])
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "start_transcription"})
+        ws.send_json({"type": "stop_transcription"})
+
+    session_id = next(iter(fake_supabase["sessions"]))
+    assert fake_supabase["sessions"][session_id]["ended_at"] is not None
+
+
+def test_supabase_failure_does_not_break_transcription(monkeypatch):
+    async def failing_create_session(target_language="en"):
+        raise RuntimeError("supabase is down")
+
+    monkeypatch.setattr("routers.ws.supabase.create_session", failing_create_session)
+
+    canned = [{"message_type": "committed_transcript", "text": "still works"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "start_transcription"})
+        assert ws.receive_json() == {"type": "transcript", "text": "still works"}
+        ws.send_json({"type": "stop_transcription"})
+        ws.send_json({"type": "message", "text": "ok"})
+        assert ws.receive_json() == {"type": "echo", "text": "ok"}
