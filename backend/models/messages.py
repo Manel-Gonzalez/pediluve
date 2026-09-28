@@ -16,3 +16,8 @@ class EchoMessage(BaseModel):
 class ErrorMessage(BaseModel):
     type: Literal["error"] = "error"
     message: str
+
+
+class AudioChunkReceived(BaseModel):
+    type: Literal["audio_chunk_received"] = "audio_chunk_received"
+    bytes: int

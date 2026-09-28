@@ -19,3 +19,7 @@
 .app li.error {
   color: #c00;
 }
+
+.app .mic {
+  margin: 1rem 0;
+}

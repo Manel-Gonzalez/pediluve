@@ -13,4 +13,9 @@ export type ErrorMessage = {
   message: string
 }
 
-export type ServerMessage = EchoMessage | ErrorMessage
+export type AudioAckMessage = {
+  type: 'audio_chunk_received'
+  bytes: number
+}
+
+export type ServerMessage = EchoMessage | ErrorMessage | AudioAckMessage
