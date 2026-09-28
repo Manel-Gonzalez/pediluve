@@ -60,6 +60,7 @@ pediluve/
 - **Types:** TypeScript strict mode on. Pydantic models for every request/response shape.
 - **Secrets:** never hardcode API keys. Read from `.env`. Never commit `.env`.
 - **Errors:** WebSocket errors go back to the client as `{type: "error", message: "..."}`. Don't let the socket die silently.
+- **Testing:** TDD for backend services and pure frontend logic — write the test first, watch it fail, then implement (`pytest` for backend, mock `RealtimeTranscriptionSession` rather than hitting the real ElevenLabs API; `vitest` for frontend pure functions). Don't force it onto browser-API-heavy code (`AudioWorklet`, `MediaStream`) — mocking those gives fragile, low-confidence tests; verify that by hand in a real browser instead. For any non-trivial new feature, write a short spec (what it does, the message contract, acceptance criteria) before the test.
 
 ## Phase gates
 
@@ -82,7 +83,7 @@ Do not start a phase until the previous one works end-to-end and is merged to `m
 - Don't add authentication. Single-user local app.
 - Don't add Docker in v1. `uvicorn` + `npm run dev` is enough.
 - Don't add a state management library (Redux, Zustand). React state + context is enough.
-- Don't add tests in Phase 0. Add them from Phase 1 on for the backend services.
+- Don't add tests in Phase 0. Add them from Phase 1 on for the backend services (done — see `backend/tests/`).
 - Don't deploy anywhere. Local only.
 - Don't over-engineer. If a file is under 50 lines and does one thing, that's good.
 
@@ -100,4 +101,4 @@ Don't ask, just do:
 
 ## Current status
 
-Phase 0 — done. Phase 1 in progress on branch `phase-1-audio`: mic capture (`AudioWorklet`, raw PCM) → backend proxy → ElevenLabs realtime STT confirmed working end-to-end (connects, echoes session config, clean start/stop lifecycle). Not yet done: rendering real speech transcripts in the UI with a live mic (only tested with silence so far), and Supabase persistence of committed transcripts.
+Phase 0 — done. Phase 1 in progress on branch `phase-1-audio`: mic capture (`AudioWorklet`, raw PCM) → backend proxy → ElevenLabs realtime STT confirmed working end-to-end with real speech (partial + committed transcripts rendering correctly in the UI, no duplicate lines, low latency). Backend tests (`pytest`, 12 passing) and frontend tests (`vitest`, 4 passing) set up; going forward, new features follow spec → test → implementation. Not yet done: Supabase persistence of committed transcripts.

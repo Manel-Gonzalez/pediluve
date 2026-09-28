@@ -1,18 +1,10 @@
 import { useCallback, useRef, useState } from 'react'
 import pcmWorkletUrl from '../audio/pcm-worklet.js?url'
+import { floatTo16BitPCM } from '../audio/pcm'
 
 type RecordingStatus = 'idle' | 'recording' | 'error'
 
 const SAMPLE_RATE = 16000
-
-function floatTo16BitPCM(input: Float32Array): ArrayBuffer {
-  const output = new Int16Array(input.length)
-  for (let i = 0; i < input.length; i++) {
-    const sample = Math.max(-1, Math.min(1, input[i]))
-    output[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff
-  }
-  return output.buffer
-}
 
 export function useMicrophone(onChunk: (chunk: ArrayBuffer) => void, chunkDurationMs: number) {
   const audioContextRef = useRef<AudioContext | null>(null)
