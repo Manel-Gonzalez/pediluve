@@ -18,12 +18,11 @@ export type PartialTranscriptMessage = {
   text: string
 }
 
-// TranscriptMessage still uses Phase 1's `text` field - the backend's rename to
-// original_text/translated_text/target_language (KAN-5) is picked up here by
-// KAN-8, which also updates how this message is rendered.
 export type TranscriptMessage = {
   type: 'transcript'
-  text: string
+  original_text: string
+  translated_text: string | null
+  target_language: string | null
 }
 
 export type StartTranscriptionMessage = {

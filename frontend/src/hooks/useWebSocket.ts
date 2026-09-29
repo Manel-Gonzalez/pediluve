@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getWebSocketUrl } from '../lib/api'
 import { buildSetTargetLanguageMessage, buildStartTranscriptionMessage } from '../lib/languageControls'
-import type { LogMessage, ServerMessage } from '../lib/types'
+import type { LogMessage, ServerMessage, TranscriptMessage } from '../lib/types'
 
 type ConnectionStatus = 'connecting' | 'open' | 'closed'
 
@@ -10,7 +10,7 @@ export function useWebSocket() {
   const [status, setStatus] = useState<ConnectionStatus>('connecting')
   const [messages, setMessages] = useState<LogMessage[]>([])
   const [partialTranscript, setPartialTranscript] = useState('')
-  const [transcriptLines, setTranscriptLines] = useState<string[]>([])
+  const [transcriptRows, setTranscriptRows] = useState<TranscriptMessage[]>([])
   const [targetLanguage, setTargetLanguageState] = useState<string | null>(null)
 
   useEffect(() => {
@@ -32,7 +32,7 @@ export function useWebSocket() {
         return
       }
       if (data.type === 'transcript') {
-        setTranscriptLines((prev) => [...prev, data.text])
+        setTranscriptRows((prev) => [...prev, data])
         setPartialTranscript('')
         return
       }
@@ -85,7 +85,7 @@ export function useWebSocket() {
     status,
     messages,
     partialTranscript,
-    transcriptLines,
+    transcriptRows,
     targetLanguage,
     sendMessage,
     sendAudioChunk,

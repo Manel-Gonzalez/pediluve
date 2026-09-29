@@ -24,9 +24,54 @@
   margin: 1rem 0;
 }
 
+.app .language-controls {
+  display: flex;
+  gap: 1.5rem;
+  margin: 1rem 0;
+}
+
+.app .language-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.app .language-controls .hint {
+  font-size: 0.8rem;
+  color: #888;
+}
+
 .app .transcript {
   margin: 1rem 0;
   min-height: 2rem;
+}
+
+.app .transcript-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  font-size: 0.8rem;
+  color: #888;
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 0.25rem;
+}
+
+.app .transcript-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.app .transcript-row p {
+  margin: 0;
+}
+
+.app .transcript-row .translated.pending {
+  color: #888;
+  font-style: italic;
 }
 
 .app .transcript .partial {

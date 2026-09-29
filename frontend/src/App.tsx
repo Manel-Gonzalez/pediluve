@@ -3,6 +3,7 @@ import { useWebSocket } from './hooks/useWebSocket'
 import { useMicrophone } from './hooks/useMicrophone'
 import { getChunkDurationMs } from './lib/api'
 import { canChangeSourceLanguage, SUPPORTED_LANGUAGES } from './lib/languageControls'
+import { describeTranslation, isTranslationPending } from './lib/transcript'
 import type { LogMessage } from './lib/types'
 import './App.css'
 
@@ -15,7 +16,7 @@ function App() {
     status,
     messages,
     partialTranscript,
-    transcriptLines,
+    transcriptRows,
     targetLanguage,
     sendMessage,
     sendAudioChunk,
@@ -115,8 +116,17 @@ function App() {
       </div>
 
       <div className="transcript">
-        {transcriptLines.map((line, index) => (
-          <p key={index}>{line}</p>
+        <div className="transcript-header">
+          <span>Original</span>
+          <span>Translation</span>
+        </div>
+        {transcriptRows.map((row, index) => (
+          <div className="transcript-row" key={index}>
+            <p className="original">{row.original_text}</p>
+            <p className={isTranslationPending(row) ? 'translated pending' : 'translated'}>
+              {describeTranslation(row)}
+            </p>
+          </div>
         ))}
         {partialTranscript && <p className="partial">{partialTranscript}</p>}
       </div>
