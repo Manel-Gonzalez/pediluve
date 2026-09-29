@@ -33,6 +33,58 @@ Why each choice was made. Update this when something changes.
 
 **Confirmed working (2026-09-28):** backend connects to ElevenLabs with the API key, gets `session_started` back with the right config, and the start/stop lifecycle doesn't leak connections or crash on disconnect. Not yet tested with real speech — only synthetic silence so far (correctly produces no transcript, since VAD found no speech).
 
+## Phase 2: source_language not yet threaded into ElevenLabs, DeepL target-code mapping
+
+**Context:** KAN-5 (DeepL integration + WebSocket contract) added a `source_language`
+field to `start_transcription` and a `set_target_language` message. `source_language`
+is parsed and stored on `ConnectionHandler` (for KAN-6 persistence and a future
+Phase-3 re-translation use) but is **not** passed to
+`RealtimeTranscriptionSession.connect()` yet.
+
+**Why:** whether ElevenLabs' `scribe_v2_realtime` realtime endpoint accepts a
+language-hint parameter at all is unconfirmed — `elevenlabs.io`/`api.elevenlabs.io`
+are unreachable from the cloud sandbox this was built in (org network policy blocks
+them), the same way `api-free.deepl.com` is. Guessing at an unverified query
+parameter on an external realtime API risked silently breaking the STT connection.
+
+**Revisit:** confirm from a machine with real network access, the same way the
+no-diarization decision above was confirmed (live docs or the `session_started`
+event payload). If a language-hint param exists, thread `source_language` through
+in `services/elevenlabs.py::connect()`. If not, it stays a label used for
+display/persistence only.
+
+## Phase 2: sessions.target_language can hold a meaningless placeholder
+
+**Context:** `sessions.target_language` is `not null` (schema constraint from
+Phase 0/1). When a recording starts before the user has ever picked a target
+language, KAN-6's `create_session()` still has to write *something* into that
+column, so it falls back to `DEFAULT_TARGET_LANGUAGE` ("en") - the same Phase 1
+placeholder. `ConnectionHandler.target_language` itself stays `None` in that case
+(DeepL is correctly never called, every `messages.translated_text` for that
+session stays null), but the `sessions` row ends up saying `target_language='en'`
+as if the session had been translated to English.
+
+**Why this is left as-is for now:** fixing it properly means making the column
+nullable (a migration), which is a schema change beyond KAN-6's scope. The
+placeholder doesn't cause a functional bug today - `ConnectionHandler.target_language`
+is the real, independent signal for "should we call DeepL", never synced from the
+DB default - but a future reader must not trust `sessions.target_language` alone
+to mean "this session has translations".
+
+**Revisit in Phase 3** ("open a past session, re-translate to a different
+language"): a consumer must check whether any `messages.translated_text` is
+non-null for that session, not just read `sessions.target_language`, to know
+whether translation was ever actually used. Consider making the column nullable
+at that point instead of carrying the placeholder further.
+
+**Also unverified (same network restriction):** whether DeepL's `/v2/translate`
+actually supports `CA` (Catalan) as a `target_lang` — `services/deepl.py`'s
+`_TARGET_LANGUAGE_CODES` maps it optimistically. If DeepL rejects it, `translate()`
+raises, which the WebSocket handler already treats as a per-message translation
+failure (logged, `translated_text` stays null) rather than a crash — so this doesn't
+block KAN-5, but Catalan-target translation may not actually work until confirmed
+against DeepL's real supported-language list.
+
 ## Persistence: Supabase over local SQLite
 
 **Chosen:** Supabase (hosted PostgreSQL)

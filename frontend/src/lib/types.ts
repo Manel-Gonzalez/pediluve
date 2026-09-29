@@ -20,7 +20,20 @@ export type PartialTranscriptMessage = {
 
 export type TranscriptMessage = {
   type: 'transcript'
-  text: string
+  original_text: string
+  translated_text: string | null
+  target_language: string | null
+}
+
+export type StartTranscriptionMessage = {
+  type: 'start_transcription'
+  audio_format: string
+  source_language?: string
+}
+
+export type SetTargetLanguageMessage = {
+  type: 'set_target_language'
+  target_language: string
 }
 
 export type LogMessage = EchoMessage | ErrorMessage

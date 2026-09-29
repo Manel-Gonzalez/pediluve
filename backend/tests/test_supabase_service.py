@@ -80,6 +80,16 @@ async def test_create_session_accepts_an_explicit_target_language(fake_client):
     assert fake_client.store["sessions"][0]["target_language"] == "es"
 
 
+async def test_create_session_defaults_source_language_to_none(fake_client):
+    await supabase.create_session()
+    assert fake_client.store["sessions"][0]["source_language"] is None
+
+
+async def test_create_session_accepts_an_explicit_source_language(fake_client):
+    await supabase.create_session(source_language="es")
+    assert fake_client.store["sessions"][0]["source_language"] == "es"
+
+
 async def test_save_message_inserts_session_id_sequence_and_text(fake_client):
     session_id = await supabase.create_session()
     await supabase.save_message(session_id, 0, "hello")
@@ -88,6 +98,33 @@ async def test_save_message_inserts_session_id_sequence_and_text(fake_client):
     assert saved["session_id"] == session_id
     assert saved["sequence"] == 0
     assert saved["original_text"] == "hello"
+
+
+async def test_save_message_defaults_translated_text_and_target_language_to_none(fake_client):
+    session_id = await supabase.create_session()
+    await supabase.save_message(session_id, 0, "hello")
+
+    saved = fake_client.store["messages"][0]
+    assert saved["translated_text"] is None
+    assert saved["target_language"] is None
+
+
+async def test_save_message_accepts_translated_text_and_target_language(fake_client):
+    session_id = await supabase.create_session()
+    await supabase.save_message(session_id, 0, "hello", translated_text="hola", target_language="es")
+
+    saved = fake_client.store["messages"][0]
+    assert saved["translated_text"] == "hola"
+    assert saved["target_language"] == "es"
+
+
+async def test_update_session_target_language_updates_the_matching_session(fake_client):
+    session_id = await supabase.create_session()
+    await supabase.update_session_target_language(session_id, "de")
+
+    row = fake_client.store["sessions"][0]
+    assert row["id"] == session_id
+    assert row["target_language"] == "de"
 
 
 async def test_end_session_sets_ended_at_on_the_matching_session(fake_client):

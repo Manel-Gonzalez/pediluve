@@ -150,8 +150,9 @@ consistent with it rather than restate it. Specifically:
   external clients rather than calling ElevenLabs or DeepL for real.
 - Browser-API-heavy work (`AudioWorklet`, `MediaStream`, `AudioContext`) is verified by
   hand in a real browser; say what to check rather than demanding a test.
-- Conventional commits, one logical change per commit; one branch per phase
-  (`phase-2-translation`), subtasks are commits on it, not their own branches.
+- Conventional commits, one logical change per commit; one branch per Jira card
+  (`feature/<KAN-N>` for a phase's parent Story, `fix/<KAN-N>`, `chore/<KAN-N>` —
+  see CLAUDE.md), subtasks are commits on the parent's branch, not their own branches.
 - Every new request/response shape gets a Pydantic model and a matching TypeScript type.
 - New dependencies, folder structure changes, and WebSocket message format changes need a
   yes from the user; a subtask that introduces one should say so in its What.

@@ -56,7 +56,7 @@ pediluve/
 
 - **Language:** code, comments, commit messages, and docs in **English**. UI strings can be in English for now.
 - **Commits:** conventional commits. `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`. One logical change per commit.
-- **Branches:** work on `main` for Phase 0. From Phase 1 on, one branch per phase (`phase-1-audio`, `phase-2-translation`, etc.), merge to `main` when the phase works end-to-end.
+- **Branches:** work on `main` for Phase 0. From Phase 1 on, one branch per Jira card: `feature/<KAN-N>` for a feature (a phase's parent Story, e.g. `feature/KAN-4`), `fix/<KAN-N>` for a bug fix, `chore/<KAN-N>` for anything else — prefix matches the card's nature, not its issue type. Subtasks are commits on the parent card's branch, not their own branches. Merge to `main` when the card's work is done and (for a phase) works end-to-end.
 - **Types:** TypeScript strict mode on. Pydantic models for every request/response shape.
 - **Secrets:** never hardcode API keys. Read from `.env`. Never commit `.env`.
 - **Errors:** WebSocket errors go back to the client as `{type: "error", message: "..."}`. Don't let the socket die silently.
@@ -101,4 +101,4 @@ Don't ask, just do:
 
 ## Current status
 
-Phase 1 — done, merged to `main`. Mic capture (`AudioWorklet`, raw PCM) → backend proxy → ElevenLabs realtime STT → committed transcripts persisted to Supabase (`sessions`/`messages`), verified end-to-end with real speech and real data in the database. `sessions.target_language` gets a placeholder (`"en"`) until Phase 2 adds the real selector. Backend tests (`pytest`, 22 passing) and frontend tests (`vitest`, 4 passing). Next: Phase 2 (language selector, DeepL translation, two-column view) on a new branch, `phase-2-translation`.
+Phase 2 — done, verified end-to-end with real speech in a real browser: language selector (source + target, independently gated), DeepL translation, two-column transcript view, translations persisted alongside the original text. PR open at `feature/KAN-4` → `main` (github.com/Manel-Gonzalez/pediluve/pull/1), not yet merged. `source_language` is captured and persisted but not yet threaded into the ElevenLabs connection (see `docs/decisions.md`). Backend tests (`pytest`, 58 passing) and frontend tests (`vitest`, 16 passing). Next: Phase 3 (sessions list, open a past session, re-translate to a different language).

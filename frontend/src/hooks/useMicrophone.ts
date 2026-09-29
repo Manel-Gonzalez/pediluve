@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import pcmWorkletUrl from '../audio/pcm-worklet.js?url'
 import { floatTo16BitPCM } from '../audio/pcm'
 
-type RecordingStatus = 'idle' | 'recording' | 'error'
+export type RecordingStatus = 'idle' | 'recording' | 'error'
 
 const SAMPLE_RATE = 16000
 
