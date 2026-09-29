@@ -86,7 +86,7 @@ Do not start a phase until the previous one works end-to-end and is merged to `m
 
 **Phase 2:** language selector in UI → backend calls DeepL after STT → both texts sent back → two-column view. Save translation alongside original.
 
-**Phase 3 (current):** user accounts. Supabase Auth, email + password — login/register/logout,
+**Phase 3:** user accounts. Supabase Auth, email + password — login/register/logout,
 React Router introduced for `/login` + a `RequireAuth`-guarded app (see `docs/decisions.md` for why
 routing moved here instead of Phase 4). Sessions and messages get scoped to the authenticated user
 (`sessions.user_id`, RLS policies so a user only ever sees their own data). Comes before Phase 4
@@ -142,15 +142,15 @@ Don't ask, just do:
 
 Phase 2 — done and merged to `main`.
 
-Phase 3 — user accounts, code complete: KAN-14 (`GET /me` + `verify_access_token`), KAN-16
-(per-user Supabase client, RLS-safe writes), KAN-18 (`/ws` authenticate handshake + auth gate),
-KAN-15 (frontend `supabase-js` client, `AuthProvider`, `AuthForm`), KAN-17 (React Router shell —
-`/login`, `RequireAuth`, `Nav`), and KAN-19 (`useWebSocket` authenticate/refresh/close-on-signout).
-KAN-13 (migration `003_auth_and_rls.sql`) has been applied to the real Supabase project, with RLS
-isolation confirmed against two real accounts (distinct `user_id`s, each only seeing their own
-`sessions` rows). Not yet merged to `main`.
+Phase 3 — user accounts, **merged to `main`** (PR #2): KAN-14 (`GET /me` + `verify_access_token`),
+KAN-16 (per-user Supabase client, RLS-safe writes), KAN-18 (`/ws` authenticate handshake + auth
+gate), KAN-15 (frontend `supabase-js` client, `AuthProvider`, `AuthForm`), KAN-17 (React Router
+shell — `/login`, `RequireAuth`, `Nav`), and KAN-19 (`useWebSocket`
+authenticate/refresh/close-on-signout). KAN-13 (migration `003_auth_and_rls.sql`) has been applied
+to the real Supabase project, with RLS isolation confirmed against two real accounts (distinct
+`user_id`s, each only seeing their own `sessions` rows).
 
-Phase 4 (current) — session-first flow, code complete: KAN-22 (migration
+Phase 4 — session-first flow, **merged to `main`** (PR #3): KAN-22 (migration
 `004_nullable_target_language.sql` — nullable `sessions.target_language`, `unique(session_id,
 sequence)` on `messages` — **applied** to the real Supabase project), KAN-21 (session
 read/update/delete functions + Pydantic models in `models/sessions.py`), KAN-36 (`/ws`
@@ -158,9 +158,10 @@ read/update/delete functions + Pydantic models in `models/sessions.py`), KAN-36 
 (`routers/sessions.py` REST CRUD), KAN-25 (on-demand `/translate` endpoint +
 `deepl.translate_many`), KAN-23 (REST API client, `HomePage`), KAN-37 (`NewSessionModal`), KAN-38
 (`LiveSessionPage` at `/sessions/:id/live`, `join_session`-aware `useWebSocket`), KAN-26
-(read-only `SessionDetailPage` at `/sessions/:id`), KAN-39 (rename/delete on `HomePage` rows), and
-KAN-40 (this docs update). Backend tests (`pytest`, 158 passing) and frontend tests (`vitest`, 65
-passing). Not yet verified end-to-end in a real browser (pending: walk through create → record →
-pause → resume → end → revisit → rename → delete against the real Supabase project, now that
-migration 004 is live). Per the phase-gate rule above, Phase 3 merges to `main` first. Next: verify
-Phase 4 end-to-end, merge Phase 3 then Phase 4 to `main`.
+(read-only `SessionDetailPage` at `/sessions/:id`), and KAN-39 (rename/delete on `HomePage` rows).
+Backend tests (`pytest`) and frontend tests (`vitest`) both passing in CI.
+
+**Not yet verified end-to-end in a real browser** — pending: walk through create → record → pause
+→ resume → end → revisit → rename → delete against the real Supabase project, now that migrations
+003 and 004 are both live. Next: that browser walkthrough, then start planning Phase 5 (TTS
+playback).
