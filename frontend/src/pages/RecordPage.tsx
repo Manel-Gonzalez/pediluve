@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { useAuth } from '../hooks/useAuth'
 import { useWebSocket } from '../hooks/useWebSocket'
@@ -59,6 +59,20 @@ function RecordPageContent({ session }: { session: Session }) {
     stop()
     stopTranscription()
   }
+
+  // Signing out (Nav) or any other client-side navigation unmounts this page
+  // directly via RequireAuth, not through the "Stop recording" button above -
+  // without this, a recording in progress would keep the microphone and
+  // AudioContext live and capturing in the background after the user has
+  // already navigated away. Both stop() and stopTranscription() are no-ops
+  // when nothing is actually recording, so this is safe to run on every
+  // unmount unconditionally.
+  useEffect(() => {
+    return () => {
+      stop()
+      stopTranscription()
+    }
+  }, [stop, stopTranscription])
 
   return (
     <div className="app">
