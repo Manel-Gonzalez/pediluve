@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { Link, useNavigate } from 'react-router-dom'
+import { NewSessionModal } from '../components/NewSessionModal'
 import { useAuth } from '../hooks/useAuth'
 import { ApiError, listSessions } from '../lib/api'
 import { sessionPath } from '../lib/routes'
@@ -65,7 +66,7 @@ function HomePageContent({ session }: { session: Session }) {
     <main className="home-page">
       <div className="home-page-header">
         <h1>Your sessions</h1>
-        {/* Placeholder slot for the "New session" button - see KAN-37 */}
+        <NewSessionModal session={session} />
       </div>
 
       {loading && <p>Loading…</p>}
