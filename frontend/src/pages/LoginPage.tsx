@@ -2,7 +2,6 @@ import { Navigate, useLocation } from 'react-router-dom'
 import { AuthForm } from '../components/AuthForm'
 import { useAuth } from '../hooks/useAuth'
 import { postLoginRedirect } from '../lib/routes'
-import './LoginPage.css'
 
 export function LoginPage() {
   const { user, loading } = useAuth()
@@ -17,8 +16,8 @@ export function LoginPage() {
   }
 
   return (
-    <div className="login-page">
-      <h1>Pédiluve</h1>
+    <div className="px-4 py-12 text-center">
+      <h1 className="text-3xl font-semibold text-ink-900">Pédiluve</h1>
       <AuthForm />
     </div>
   )

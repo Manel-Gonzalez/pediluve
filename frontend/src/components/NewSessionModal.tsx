@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom'
 import { ApiError, createSession } from '../lib/api'
 import { liveSessionPath } from '../lib/routes'
 import { validateSessionTitle } from '../lib/sessionTitle'
-import './NewSessionModal.css'
 
 export function NewSessionModal({ session }: { session: Session }) {
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -51,13 +50,21 @@ export function NewSessionModal({ session }: { session: Session }) {
 
   return (
     <>
-      <button onClick={openModal}>New session</button>
+      <button
+        onClick={openModal}
+        className="bg-accent-500 text-white hover:bg-accent-600 rounded-md px-4 py-2"
+      >
+        New session
+      </button>
       {/* Esc closes a native <dialog> on its own (fires "cancel" then
           "close") - no extra handling needed for that part of the spec. */}
-      <dialog ref={dialogRef} className="new-session-modal">
-        <form onSubmit={handleSubmit}>
-          <h2>New session</h2>
-          <label>
+      <dialog
+        ref={dialogRef}
+        className="bg-white rounded-lg shadow-lg p-6 min-w-80 backdrop:bg-black/40"
+      >
+        <form onSubmit={handleSubmit} className="flex flex-col">
+          <h2 className="text-xl font-medium mt-0 mb-3">New session</h2>
+          <label className="flex flex-col gap-1 text-sm font-medium mb-4">
             Title
             <input
               autoFocus
@@ -65,14 +72,24 @@ export function NewSessionModal({ session }: { session: Session }) {
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               disabled={pending}
+              className="px-3 py-2 border border-ink-200 rounded-md text-base font-normal focus:border-accent-500 focus:outline-none"
             />
           </label>
-          {error && <p className="new-session-modal-error">{error}</p>}
-          <div className="new-session-modal-actions">
-            <button type="button" onClick={() => dialogRef.current?.close()} disabled={pending}>
+          {error && <p className="text-red-600 mb-4">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => dialogRef.current?.close()}
+              disabled={pending}
+              className="px-4 py-2 rounded-md border border-ink-200 disabled:opacity-50"
+            >
               Cancel
             </button>
-            <button type="submit" disabled={pending}>
+            <button
+              type="submit"
+              disabled={pending}
+              className="bg-accent-500 text-white hover:bg-accent-600 rounded-md px-4 py-2 disabled:opacity-50"
+            >
               {pending ? 'Creating…' : 'Create'}
             </button>
           </div>

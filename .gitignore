@@ -20,6 +20,9 @@ frontend/*.tsbuildinfo
 .vscode/
 .idea/
 
+# Claude Code agent worktrees
+.claude/worktrees/
+
 # Audio test files
 *.wav
 *.webm

@@ -1,9 +1,14 @@
-* {
-  box-sizing: border-box;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-body {
-  margin: 0;
-  color: #1a1a1a;
-  background: #fff;
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    @apply bg-white text-ink-900 font-sans;
+  }
 }

@@ -10,7 +10,6 @@ import { describeConnectionStatus } from '../lib/auth'
 import { canChangeSourceLanguage, SUPPORTED_LANGUAGES } from '../lib/languageControls'
 import { recordButtonLabel } from '../lib/recording'
 import type { LogMessage } from '../lib/types'
-import './LiveSessionPage.css'
 
 function describeMessage(message: LogMessage): string {
   return message.type === 'echo' ? message.text : message.message
@@ -107,35 +106,60 @@ function LiveSessionPageContent({ session, sessionId }: { session: Session; sess
 
   if (joinStatus === 'not_found') {
     return (
-      <div className="app">
+      <div className="mx-auto max-w-2xl px-4 py-8">
         <p>Session not found.</p>
-        <Link to="/">Back home</Link>
+        <Link to="/" className="text-accent-500 hover:text-accent-600">
+          Back home
+        </Link>
       </div>
     )
   }
 
-  return (
-    <div className="app">
-      <h1>{title ?? 'Untitled session'}</h1>
-      <p>WebSocket status: {describeConnectionStatus(status, isAuthenticated)}</p>
+  const isRecording = micStatus === 'recording'
 
-      <div className="mic">
-        <p>Microphone status: {micStatus}</p>
-        {micStatus === 'recording' ? (
-          <button onClick={handlePause}>{recordButtonLabel(micStatus, hasRecorded)}</button>
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-8">
+      <h1 className="text-2xl font-semibold text-ink-900">{title ?? 'Untitled session'}</h1>
+      <p className="mt-1 text-sm text-ink-500">
+        WebSocket status: {describeConnectionStatus(status, isAuthenticated)}
+      </p>
+
+      <div className="my-4 flex flex-wrap items-center gap-3">
+        <p className="flex items-center gap-2 text-sm text-ink-500">
+          Microphone status: {micStatus}
+          {isRecording && (
+            <span className="relative flex h-3 w-3" aria-label="Recording" role="status">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent-400 opacity-75" />
+              <span className="relative inline-flex h-3 w-3 rounded-full bg-accent-500" />
+            </span>
+          )}
+        </p>
+        {isRecording ? (
+          <button
+            onClick={handlePause}
+            className="rounded bg-accent-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-600"
+          >
+            {recordButtonLabel(micStatus, hasRecorded)}
+          </button>
         ) : (
           <button
             onClick={handleStartRecording}
             disabled={joinStatus !== 'joined' || isStartingRecording}
+            className="rounded bg-accent-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-600 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {recordButtonLabel(micStatus, hasRecorded)}
           </button>
         )}
-        <button onClick={handleEndSession}>End session</button>
+        <button
+          onClick={handleEndSession}
+          className="rounded border border-ink-200 px-3 py-1.5 text-sm font-medium text-ink-900 hover:border-ink-300"
+        >
+          End session
+        </button>
       </div>
 
-      <div className="language-controls">
-        <label>
+      <div className="my-4 flex flex-wrap gap-6">
+        <label className="flex flex-col gap-1 text-sm text-ink-900">
           Source language
           <select
             value={sourceLanguage ?? 'auto'}
@@ -143,6 +167,7 @@ function LiveSessionPageContent({ session, sessionId }: { session: Session; sess
             onChange={(event) =>
               setSourceLanguage(event.target.value === 'auto' ? null : event.target.value)
             }
+            className="rounded border border-ink-200 px-2 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
           >
             <option value="auto">Auto-detect</option>
             {SUPPORTED_LANGUAGES.map((code) => (
@@ -152,16 +177,17 @@ function LiveSessionPageContent({ session, sessionId }: { session: Session; sess
             ))}
           </select>
           {(!canChangeSourceLanguage(micStatus) || isStartingRecording) && (
-            <span className="hint">Stop recording to change input language</span>
+            <span className="text-xs text-ink-500">Stop recording to change input language</span>
           )}
         </label>
 
-        <label>
+        <label className="flex flex-col gap-1 text-sm text-ink-900">
           Target language
           <select
             value={targetLanguage}
             disabled={joinStatus !== 'joined'}
             onChange={(event) => setTargetLanguage(event.target.value)}
+            className="rounded border border-ink-200 px-2 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
           >
             {SUPPORTED_LANGUAGES.map((code) => (
               <option key={code} value={code}>
@@ -172,20 +198,20 @@ function LiveSessionPageContent({ session, sessionId }: { session: Session; sess
         </label>
       </div>
 
-      <div className="transcript">
-        <div className="transcript-header">
-          <span>Original</span>
-          <span>Translation</span>
-        </div>
+      <div className="my-4 flex flex-col gap-3">
         {transcriptRows.map((row, index) => (
-          <TranscriptRow key={index} row={row} />
+          <TranscriptRow key={index} row={row} sourceLanguage={sourceLanguage} />
         ))}
-        {partialTranscript && <p className="partial">{partialTranscript}</p>}
+        {partialTranscript && (
+          <p className="rounded-lg border border-dashed border-ink-200 p-3 text-sm italic text-ink-500">
+            {partialTranscript}
+          </p>
+        )}
       </div>
 
-      <ul>
+      <ul className="list-none p-0">
         {messages.map((message, index) => (
-          <li key={index} className={message.type === 'error' ? 'error' : ''}>
+          <li key={index} className={message.type === 'error' ? 'text-red-600' : undefined}>
             {describeMessage(message)}
           </li>
         ))}

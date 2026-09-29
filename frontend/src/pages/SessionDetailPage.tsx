@@ -6,7 +6,6 @@ import { useAuth } from '../hooks/useAuth'
 import { ApiError, getSession, translateSession } from '../lib/api'
 import { DEFAULT_TARGET_LANGUAGE, SUPPORTED_LANGUAGES } from '../lib/languageControls'
 import type { SessionDetail } from '../lib/types'
-import './SessionDetailPage.css'
 
 export function SessionDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -88,43 +87,52 @@ function SessionDetailPageContent({ session, sessionId }: { session: Session; se
 
   if (notFound) {
     return (
-      <div className="session-detail-page">
+      <div className="mx-auto max-w-2xl px-4 py-8">
         <p>Session not found.</p>
-        <Link to="/">Back to sessions</Link>
+        <Link to="/" className="text-accent-500 hover:text-accent-600">
+          Back to sessions
+        </Link>
       </div>
     )
   }
 
   if (loading) {
     return (
-      <div className="session-detail-page">
-        <p>Loading…</p>
+      <div className="mx-auto max-w-2xl px-4 py-8">
+        <p className="text-ink-500">Loading…</p>
       </div>
     )
   }
 
   if (error || !detail) {
     return (
-      <div className="session-detail-page">
-        <p className="session-detail-error">{error ?? 'Could not load session'}</p>
-        <Link to="/">Back to sessions</Link>
+      <div className="mx-auto max-w-2xl px-4 py-8">
+        <p className="text-red-600">{error ?? 'Could not load session'}</p>
+        <Link to="/" className="text-accent-500 hover:text-accent-600">
+          Back to sessions
+        </Link>
       </div>
     )
   }
 
   return (
-    <div className="session-detail-page">
-      <Link to="/">Back to sessions</Link>
-      <h1>{detail.title ?? 'Untitled session'}</h1>
-      <p className="session-detail-date">{new Date(detail.created_at).toLocaleString()}</p>
+    <div className="mx-auto max-w-2xl px-4 py-8">
+      <Link to="/" className="text-sm text-accent-500 hover:text-accent-600">
+        Back to sessions
+      </Link>
+      <h1 className="mt-2 text-2xl font-semibold text-ink-900">
+        {detail.title ?? 'Untitled session'}
+      </h1>
+      <p className="mt-1 text-sm text-ink-500">{new Date(detail.created_at).toLocaleString()}</p>
 
-      <div className="session-detail-language">
-        <label>
+      <div className="my-4 flex items-center gap-4">
+        <label className="flex flex-col gap-1 text-sm text-ink-900">
           View in language
           <select
             value={viewLanguage}
             disabled={translating}
             onChange={(event) => handleViewLanguageChange(event.target.value)}
+            className="rounded border border-ink-200 px-2 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
           >
             {SUPPORTED_LANGUAGES.map((code) => (
               <option key={code} value={code}>
@@ -133,18 +141,15 @@ function SessionDetailPageContent({ session, sessionId }: { session: Session; se
             ))}
           </select>
         </label>
-        {translating && <span className="session-detail-translating">Translating…</span>}
+        {translating && <span className="text-sm italic text-ink-500">Translating…</span>}
       </div>
-      {translateError && <p className="session-detail-error">{translateError}</p>}
+      {translateError && <p className="text-red-600">{translateError}</p>}
 
-      <div className="transcript">
-        <div className="transcript-header">
-          <span>Original</span>
-          <span>Translation</span>
-        </div>
+      <div className="my-4 flex flex-col gap-3">
         {detail.messages.map((message) => (
           <TranscriptRow
             key={message.id}
+            sourceLanguage={detail.source_language}
             row={
               translations
                 ? {

@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from '../hooks/useAuth'
-import './AuthForm.css'
 
 type Mode = 'login' | 'register'
 
@@ -46,9 +45,9 @@ export function AuthForm() {
   }
 
   return (
-    <div className="auth-form">
-      <form onSubmit={handleSubmit}>
-        <label>
+    <div className="max-w-sm mx-auto mt-16">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <label className="flex flex-col gap-1 text-sm font-medium">
           Email
           <input
             type="email"
@@ -56,9 +55,10 @@ export function AuthForm() {
             onChange={(event) => setEmail(event.target.value)}
             required
             autoComplete="email"
+            className="px-3 py-2 border border-ink-200 rounded-md text-base font-normal focus:border-accent-500 focus:outline-none"
           />
         </label>
-        <label>
+        <label className="flex flex-col gap-1 text-sm font-medium">
           Password
           <input
             type="password"
@@ -71,28 +71,41 @@ export function AuthForm() {
             // with the browser rejecting the submit before signIn() ever runs.
             minLength={mode === 'register' ? 6 : undefined}
             autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+            className="px-3 py-2 border border-ink-200 rounded-md text-base font-normal focus:border-accent-500 focus:outline-none"
           />
         </label>
-        <button type="submit" disabled={submitting}>
+        <button
+          type="submit"
+          disabled={submitting}
+          className="bg-accent-500 text-white hover:bg-accent-600 rounded-md px-4 py-2 disabled:opacity-50"
+        >
           {mode === 'login' ? 'Sign in' : 'Register'}
         </button>
       </form>
 
-      {error && <p className="auth-form-error">{error}</p>}
-      {infoMessage && <p className="auth-form-info">{infoMessage}</p>}
+      {error && <p className="text-red-600 mt-3">{error}</p>}
+      {infoMessage && <p className="text-ink-900 mt-3">{infoMessage}</p>}
 
-      <p className="auth-form-toggle">
+      <p className="text-sm mt-3">
         {mode === 'login' ? (
           <>
             No account yet?{' '}
-            <button type="button" onClick={() => switchMode('register')}>
+            <button
+              type="button"
+              onClick={() => switchMode('register')}
+              className="bg-transparent border-none p-0 text-accent-500 underline cursor-pointer"
+            >
               Register
             </button>
           </>
         ) : (
           <>
             Already have an account?{' '}
-            <button type="button" onClick={() => switchMode('login')}>
+            <button
+              type="button"
+              onClick={() => switchMode('login')}
+              className="bg-transparent border-none p-0 text-accent-500 underline cursor-pointer"
+            >
               Sign in
             </button>
           </>
