@@ -14,8 +14,10 @@ This is a portfolio project. Code quality and clear structure matter more than s
 - **Backend:** Python 3.11+ + FastAPI + `websockets`. Use `uvicorn` for dev.
 - **STT:** ElevenLabs Scribe **realtime** (`scribe_v2_realtime`, `wss://api.elevenlabs.io/v1/speech-to-text/realtime`). Backend proxies: browser streams raw PCM to our own `/ws`, backend forwards it to ElevenLabs' WebSocket and relays `partial_transcript`/`committed_transcript` events back. No diarization on this endpoint — REST batch (`scribe_v2`) is the fallback if we ever need speaker separation.
 - **Translation:** DeepL API Free tier.
-- **TTS:** ElevenLabs (Phase 4 only).
+- **TTS:** ElevenLabs (Phase 5 only), single fixed voice (`ELEVENLABS_VOICE_ID`) — no per-language voice mapping in v1.
 - **DB:** Supabase (PostgreSQL). Use the `supabase-py` client. Schema in `supabase/migrations/`.
+- **Auth:** Supabase Auth (Phase 3 only), email + password. No other provider (no OAuth, no magic link) in v1.
+- **Routing:** React Router (Phase 4 only) — each session gets its own URL so a reload doesn't lose the current view. No routing before Phase 4.
 - **Audio capture:** Web Audio API + `AudioWorklet`, raw PCM (`pcm_16000` or whatever the browser's `AudioContext` actually negotiates). No `MediaRecorder`/WebM, no `pydub`/`ffmpeg` — ElevenLabs realtime needs uncompressed audio, so there's no container to convert.
 
 ## Repo structure
@@ -72,15 +74,32 @@ Do not start a phase until the previous one works end-to-end and is merged to `m
 
 **Phase 2:** language selector in UI → backend calls DeepL after STT → both texts sent back → two-column view. Save translation alongside original.
 
-**Phase 3:** sessions list page → open a past session → re-translate all messages to a different language.
+**Phase 3:** user accounts. Supabase Auth, email + password — login/register/logout. Sessions and
+messages get scoped to the authenticated user (`sessions.user_id`, RLS policies so a user only
+ever sees their own data). Comes before Phase 4 because "list of my past sessions" is meaningless
+without knowing who "I" am first.
 
-**Phase 4:** "play" button per translated message → ElevenLabs TTS → audio playback in browser.
+**Phase 4:** sessions list page (the authenticated user's own sessions) → open a past session,
+each on its own routable URL (React Router) so a reload doesn't bounce back to home → re-translate
+to a different language **computed on demand, not persisted** (the original live-session
+translation stays in `messages.translated_text`/`target_language` untouched; viewing history in
+another language just calls DeepL again for that view) → rename or delete a session (mini CRUD;
+`sessions.title` already exists for the rename, `messages` already cascade-deletes with the
+session).
 
-**Phase 5:** speaker labels if multiple audio inputs (realtime STT has no diarization — would need `use_multi_channel` or falling back to REST batch), further VAD tuning.
+**Phase 5:** "play" button per translated message → ElevenLabs TTS → audio generated once and
+cached in Supabase Storage (a repeat play serves the stored file, not a fresh paid TTS call) →
+playback in browser. One fixed voice for v1, not one per language.
+
+**Phase 6 (parked, exploratory only):** speaker labels if multiple audio inputs. No multi-channel
+capture exists yet and there's no confirmed use case for it — start with a spike (is there a real
+multi-mic scenario? is `use_multi_channel` viable, or REST batch the only path?) before committing
+to implementation subtasks. Realtime STT has no diarization on its own. Also: further VAD tuning.
 
 ## What NOT to do
 
-- Don't add authentication. Single-user local app.
+- Don't add multi-tenant/org complexity — Phase 3 adds per-user accounts (Supabase Auth), not
+  roles, teams, or admin features. Each user only ever sees their own sessions.
 - Don't add Docker in v1. `uvicorn` + `npm run dev` is enough.
 - Don't add a state management library (Redux, Zustand). React state + context is enough.
 - Don't add tests in Phase 0. Add them from Phase 1 on for the backend services (done — see `backend/tests/`).
@@ -101,4 +120,4 @@ Don't ask, just do:
 
 ## Current status
 
-Phase 2 — done, verified end-to-end with real speech in a real browser: language selector (source + target, independently gated), DeepL translation, two-column transcript view, translations persisted alongside the original text. PR open at `feature/KAN-4` → `main` (github.com/Manel-Gonzalez/pediluve/pull/1), not yet merged. `source_language` is captured and persisted but not yet threaded into the ElevenLabs connection (see `docs/decisions.md`). Backend tests (`pytest`, 58 passing) and frontend tests (`vitest`, 16 passing). Next: Phase 3 (sessions list, open a past session, re-translate to a different language).
+Phase 2 — done, verified end-to-end with real speech in a real browser: language selector (source + target, independently gated), DeepL translation, two-column transcript view, translations persisted alongside the original text. PR open at `feature/KAN-4` → `main` (github.com/Manel-Gonzalez/pediluve/pull/1), not yet merged. `source_language` is captured and persisted but not yet threaded into the ElevenLabs connection (see `docs/decisions.md`). Backend tests (`pytest`, 58 passing) and frontend tests (`vitest`, 16 passing). Next: Phase 3 (user accounts — Supabase Auth, email + password).

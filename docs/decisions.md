@@ -85,6 +85,34 @@ failure (logged, `translated_text` stays null) rather than a crash — so this d
 block KAN-5, but Catalan-target translation may not actually work until confirmed
 against DeepL's real supported-language list.
 
+## Phase reorder: user accounts (auth) inserted as Phase 3, before sessions list
+
+**Context:** the original phase gates (Phase 0-5) never included authentication — the app was
+single-user and local. While scoping the sessions-list feature, Manel decided he wants per-user
+accounts ("each user can view their own past sessions"), reversing the earlier "don't add auth"
+rule in `CLAUDE.md`.
+
+**Why auth has to come before the sessions list, not after:** "list of my past sessions" only
+means something once there is a concept of "my" — retrofitting `user_id` onto sessions after
+building an account-agnostic list page would mean redoing the list/detail views' data-fetching
+once auth lands. Doing it in the other order avoids that rework.
+
+**Chosen for auth:** Supabase Auth, email + password. **Alternatives considered:** magic link
+(no password to manage, but adds a dependency on email deliverability being fast enough to not
+annoy a solo dev testing login repeatedly), Google OAuth (nicer UX for a portfolio demo, but needs
+OAuth credentials set up in Google Cloud before any code can be written — extra setup cost for a
+single-user-per-account app with no real "who are you" stakes).
+
+**Chosen for routing:** React Router, added in Phase 4. Each session gets its own URL so a reload
+or crash returns to that session, not to the home/list view — the alternative (React state only,
+no router) was explicitly rejected because losing your place on a refresh is bad UX for something
+you might have open for a while.
+
+**Revisit:** RLS is currently disabled site-wide (`supabase/migrations/001_initial.sql` says so
+explicitly, anticipating this exact moment) — Phase 3 must turn it on and add policies scoping
+`sessions`/`messages` to `auth.uid()`, not just add a `user_id` column and trust the backend to
+filter correctly on every query.
+
 ## Persistence: Supabase over local SQLite
 
 **Chosen:** Supabase (hosted PostgreSQL)
