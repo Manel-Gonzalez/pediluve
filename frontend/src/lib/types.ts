@@ -46,6 +46,26 @@ export type AuthenticatedMessage = {
   user_id: string
 }
 
+// Attaches this WS connection to an already-created session (created via the
+// REST API's POST /api/sessions, KAN-24) instead of the connection implicitly
+// creating one.
+export type JoinSessionMessage = {
+  type: 'join_session'
+  session_id: string
+}
+
+// Reply to a successful join_session: the session's current metadata plus
+// every transcript already stored, so the live view can render history
+// before anything new is said.
+export type SessionJoinedMessage = {
+  type: 'session_joined'
+  session_id: string
+  title: string | null
+  source_language: string | null
+  target_language: string | null
+  transcripts: TranscriptMessage[]
+}
+
 // Sent when the target language changes mid-session and there's already
 // committed transcript to retranslate - replaces the whole transcript list
 // rather than patching individual rows (no per-message id goes over the
@@ -63,6 +83,7 @@ export type ServerMessage =
   | PartialTranscriptMessage
   | TranscriptMessage
   | AuthenticatedMessage
+  | SessionJoinedMessage
   | RetranslatedTranscriptsMessage
 
 // ── REST session models (KAN-23), matching backend/models/sessions.py ─────
