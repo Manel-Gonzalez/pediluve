@@ -10,7 +10,6 @@ import { describeConnectionStatus } from '../lib/auth'
 import { canChangeSourceLanguage, SUPPORTED_LANGUAGES } from '../lib/languageControls'
 import { recordButtonLabel } from '../lib/recording'
 import type { LogMessage } from '../lib/types'
-import './LiveSessionPage.transcript.css'
 
 function describeMessage(message: LogMessage): string {
   return message.type === 'echo' ? message.text : message.message
@@ -199,15 +198,15 @@ function LiveSessionPageContent({ session, sessionId }: { session: Session; sess
         </label>
       </div>
 
-      <div className="transcript">
-        <div className="transcript-header">
-          <span>Original</span>
-          <span>Translation</span>
-        </div>
+      <div className="my-4 flex flex-col gap-3">
         {transcriptRows.map((row, index) => (
-          <TranscriptRow key={index} row={row} />
+          <TranscriptRow key={index} row={row} sourceLanguage={sourceLanguage} />
         ))}
-        {partialTranscript && <p className="partial">{partialTranscript}</p>}
+        {partialTranscript && (
+          <p className="rounded-lg border border-dashed border-ink-200 p-3 text-sm italic text-ink-500">
+            {partialTranscript}
+          </p>
+        )}
       </div>
 
       <ul className="list-none p-0">
