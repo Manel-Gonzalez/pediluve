@@ -17,7 +17,7 @@ This is a portfolio project. Code quality and clear structure matter more than s
 - **TTS:** ElevenLabs (Phase 5 only), single fixed voice (`ELEVENLABS_VOICE_ID`) — no per-language voice mapping in v1.
 - **DB:** Supabase (PostgreSQL). Use the `supabase-py` client. Schema in `supabase/migrations/`.
 - **Auth:** Supabase Auth (Phase 3 only), email + password. No other provider (no OAuth, no magic link) in v1.
-- **Routing:** React Router (Phase 4 only) — each session gets its own URL so a reload doesn't lose the current view. No routing before Phase 4.
+- **Routing:** React Router, introduced in Phase 3 (`/login`, `RequireAuth`-guarded routes) — Phase 4 adds routable per-session URLs on top of the same router rather than introducing one from scratch. No routing before Phase 3.
 - **Audio capture:** Web Audio API + `AudioWorklet`, raw PCM (`pcm_16000` or whatever the browser's `AudioContext` actually negotiates). No `MediaRecorder`/WebM, no `pydub`/`ffmpeg` — ElevenLabs realtime needs uncompressed audio, so there's no container to convert.
 
 ## Repo structure
@@ -32,26 +32,31 @@ pediluve/
 │   └── decisions.md       ← why X over Y, keep it updated
 ├── frontend/
 │   ├── src/
-│   │   ├── components/
-│   │   ├── hooks/         ← useWebSocket, useMicrophone
-│   │   ├── lib/           ← api client, types
+│   │   ├── components/    ← AuthForm, Nav, RequireAuth (route guard)
+│   │   ├── hooks/         ← useWebSocket, useMicrophone, useAuth (AuthProvider)
+│   │   ├── pages/         ← LoginPage, RecordPage (routed from App.tsx)
+│   │   ├── lib/           ← api client, types, auth/languageControls helpers
 │   │   ├── audio/         ← pcm-worklet.js (AudioWorkletProcessor)
-│   │   └── App.tsx
+│   │   ├── App.tsx        ← route table only (RequireAuth + pages/)
+│   │   └── main.tsx       ← AuthProvider + BrowserRouter wiring
 │   ├── package.json
 │   └── vite.config.ts
 ├── backend/
 │   ├── main.py            ← FastAPI app, WebSocket endpoint
-│   ├── routers/
+│   ├── routers/           ← ws.py, me.py (GET /me)
 │   ├── services/
 │   │   ├── elevenlabs.py
 │   │   ├── deepl.py
-│   │   └── supabase.py
+│   │   ├── supabase.py
+│   │   └── auth.py        ← verify_access_token (Supabase Auth)
 │   ├── models/            ← Pydantic schemas
 │   ├── requirements.txt
 │   └── .env               ← gitignored
 └── supabase/
     └── migrations/
-        └── 001_initial.sql
+        ├── 001_initial.sql
+        ├── 002_disable_rls.sql   ← superseded by 003, kept as history
+        └── 003_auth_and_rls.sql  ← sessions.user_id, RLS + owner policies
 ```
 
 ## Conventions
@@ -68,20 +73,21 @@ pediluve/
 
 Do not start a phase until the previous one works end-to-end and is merged to `main`.
 
-**Phase 0 (current):** repo skeleton, WebSocket echo (frontend sends text, backend echoes it back), Supabase tables created via migration, `.env.example` complete.
+**Phase 0:** repo skeleton, WebSocket echo (frontend sends text, backend echoes it back), Supabase tables created via migration, `.env.example` complete.
 
 **Phase 1:** mic capture → raw PCM streamed continuously over WebSocket → backend proxies to ElevenLabs realtime STT → partial/committed transcript text back over WebSocket → rendered in UI. Save each committed message to Supabase.
 
 **Phase 2:** language selector in UI → backend calls DeepL after STT → both texts sent back → two-column view. Save translation alongside original.
 
-**Phase 3:** user accounts. Supabase Auth, email + password — login/register/logout. Sessions and
-messages get scoped to the authenticated user (`sessions.user_id`, RLS policies so a user only
-ever sees their own data). Comes before Phase 4 because "list of my past sessions" is meaningless
-without knowing who "I" am first.
+**Phase 3 (current):** user accounts. Supabase Auth, email + password — login/register/logout,
+React Router introduced for `/login` + a `RequireAuth`-guarded app (see `docs/decisions.md` for why
+routing moved here instead of Phase 4). Sessions and messages get scoped to the authenticated user
+(`sessions.user_id`, RLS policies so a user only ever sees their own data). Comes before Phase 4
+because "list of my past sessions" is meaningless without knowing who "I" am first.
 
 **Phase 4:** sessions list page (the authenticated user's own sessions) → open a past session,
-each on its own routable URL (React Router) so a reload doesn't bounce back to home → re-translate
-to a different language **computed on demand, not persisted** (the original live-session
+each on its own routable URL (added to the router introduced in Phase 3) so a reload doesn't bounce
+back to home → re-translate to a different language **computed on demand, not persisted** (the original live-session
 translation stays in `messages.translated_text`/`target_language` untouched; viewing history in
 another language just calls DeepL again for that view) → rename or delete a session (mini CRUD;
 `sessions.title` already exists for the rename, `messages` already cascade-deletes with the
@@ -120,4 +126,16 @@ Don't ask, just do:
 
 ## Current status
 
-Phase 2 — done, verified end-to-end with real speech in a real browser: language selector (source + target, independently gated), DeepL translation, two-column transcript view, translations persisted alongside the original text. PR open at `feature/KAN-4` → `main` (github.com/Manel-Gonzalez/pediluve/pull/1), not yet merged. `source_language` is captured and persisted but not yet threaded into the ElevenLabs connection (see `docs/decisions.md`). Backend tests (`pytest`, 58 passing) and frontend tests (`vitest`, 16 passing). Next: Phase 3 (user accounts — Supabase Auth, email + password).
+Phase 2 — done and merged to `main`.
+
+Phase 3 (current) — user accounts, in progress. Implemented, tested, and code-reviewed: KAN-14
+(`GET /me` + `verify_access_token`), KAN-16 (per-user Supabase client, RLS-safe writes), KAN-18
+(`/ws` authenticate handshake + auth gate), KAN-15 (frontend `supabase-js` client, `AuthProvider`,
+`AuthForm`), KAN-17 (React Router shell — `/login`, `RequireAuth`, `RecordPage`, `Nav`) and KAN-19
+(`useWebSocket` authenticate/refresh/close-on-signout). KAN-13 (migration `003_auth_and_rls.sql`)
+is written but **not yet applied** to the real Supabase project — apply it via `README.md`'s
+Supabase setup steps once ready. Nothing in Phase 3 has been verified end-to-end yet in a real
+browser with a real Supabase project and RLS on (pending: apply the migration, then walk through
+login/register, two-account RLS isolation, sign-out mid-recording, and a recording surviving a JWT
+refresh). Backend tests (`pytest`, 85 passing) and frontend tests (`vitest`, 29 passing). Next:
+apply migration 003, verify Phase 3 end-to-end, merge to `main`.
