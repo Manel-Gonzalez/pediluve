@@ -12,6 +12,7 @@ from models.messages import (
     EchoMessage,
     ErrorMessage,
     PartialTranscript,
+    RetranslatedTranscripts,
     SetTargetLanguage,
     StartTranscription,
     Transcript,
@@ -46,6 +47,22 @@ class ConnectionHandler:
         self.transcript_queue: asyncio.Queue[str] | None = None
         self.transcript_worker_task: asyncio.Task | None = None
         self._background_tasks: set[asyncio.Task] = set()
+        # Original text of every committed transcript for the life of this
+        # connection, in order - lets a later target-language change
+        # retranslate everything said so far, not just what's said from then
+        # on. Deliberately NOT reset per recording (unlike sequence/
+        # db_session_id): the frontend's own transcriptRows keeps accumulating
+        # across multiple stop/start cycles in the same connection too (never
+        # cleared on a fresh start_transcription), and retranslated_transcripts
+        # wholesale-replaces that list - resetting this per recording would
+        # silently drop every earlier recording's rows from the screen the
+        # next time the language changes.
+        self.committed_texts: list[str] = []
+        # Bumped on every retranslation-triggering language change; a background
+        # retranslation checks it's still current before sending its result, so
+        # a fast second change can't be clobbered by a slower first one that
+        # finishes later (see _retranslate_committed_texts).
+        self._retranslation_generation = 0
 
     async def send(self, payload: dict) -> None:
         async with self.send_lock:
@@ -178,6 +195,7 @@ class ConnectionHandler:
                     ).model_dump()
                 )
                 return
+            previous_target_language = self.target_language
             self.target_language = request.target_language
             if self.db_session_id is not None:
                 # Fire-and-forget: this is a network write, and the main receive
@@ -185,6 +203,13 @@ class ConnectionHandler:
                 # stalling on it (same reasoning as queuing committed transcripts).
                 self._spawn_background(
                     self._persist_target_language(self.db_session_id, self.target_language)
+                )
+            if self.target_language != previous_target_language and self.committed_texts:
+                self._retranslation_generation += 1
+                self._spawn_background(
+                    self._retranslate_committed_texts(
+                        self.target_language, self._retranslation_generation
+                    )
                 )
             return
 
@@ -272,6 +297,11 @@ class ConnectionHandler:
                 self.transcript_queue.task_done()
 
     async def _handle_committed_transcript(self, text: str) -> None:
+        # Tracked regardless of translation outcome, so a later target-language
+        # change has the full transcript to retranslate even if this specific
+        # line's own translation failed.
+        self.committed_texts.append(text)
+
         # Captured before the DeepL await, not re-read after it resolves: a
         # set_target_language arriving while this translation is in flight must not
         # reassign it to the wrong language.
@@ -312,6 +342,52 @@ class ConnectionHandler:
                     original_text=text,
                     translated_text=translated_text,
                     target_language=target_language,
+                ).model_dump()
+            )
+        except WebSocketDisconnect:
+            pass
+
+    async def _retranslate_committed_texts(self, target_language: str, generation: int) -> None:
+        # Iterates the live list, not a snapshot: retranslated_transcripts
+        # wholesale-replaces the frontend's transcript list (no per-row id
+        # goes over the wire), so a transcript committed by the normal path
+        # while this loop is still running must end up in this result too -
+        # otherwise the wholesale replace would erase it from the screen even
+        # though it was already correctly delivered. Appending to a list
+        # while iterating it forward like this is well-defined in Python (the
+        # loop picks up items appended before it reaches the current end).
+        transcripts = []
+        for text in self.committed_texts:
+            # Checked every iteration, not just once at the end: a further
+            # language change means this one is already stale, so stop
+            # spending DeepL calls translating text nobody will see translated
+            # this way.
+            if generation != self._retranslation_generation:
+                return
+            translated_text: str | None = None
+            try:
+                translated_text = await deepl.translate(text, target_language)
+            except Exception:
+                logger.exception("Could not retranslate transcript")
+            transcripts.append(
+                Transcript(
+                    original_text=text,
+                    translated_text=translated_text,
+                    target_language=target_language,
+                )
+            )
+
+        # Also checked once more here, not just per-iteration above: the very
+        # last iteration's own translate call can itself be what a newer
+        # language change races against - the loop would otherwise exit
+        # normally afterward and still send this now-stale result.
+        if generation != self._retranslation_generation:
+            return
+
+        try:
+            await self.send(
+                RetranslatedTranscripts(
+                    target_language=target_language, transcripts=transcripts
                 ).model_dump()
             )
         except WebSocketDisconnect:

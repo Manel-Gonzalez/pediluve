@@ -59,3 +59,13 @@ class Transcript(BaseModel):
     # null (target_language does not) if DeepL fails for this specific message.
     translated_text: str | None = None
     target_language: str | None = None
+
+
+class RetranslatedTranscripts(BaseModel):
+    # Sent when the target language changes mid-session and there's already
+    # committed transcript to retranslate - the client replaces its whole
+    # transcript list with this one rather than matching individual rows, so
+    # no per-message id/sequence needs to go over the wire for this.
+    type: Literal["retranslated_transcripts"] = "retranslated_transcripts"
+    target_language: str
+    transcripts: list[Transcript]
