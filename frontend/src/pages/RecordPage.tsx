@@ -1,7 +1,10 @@
 import { useState } from 'react'
+import type { Session } from '@supabase/supabase-js'
+import { useAuth } from '../hooks/useAuth'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { useMicrophone } from '../hooks/useMicrophone'
 import { getChunkDurationMs } from '../lib/api'
+import { describeConnectionStatus } from '../lib/auth'
 import { canChangeSourceLanguage, SUPPORTED_LANGUAGES } from '../lib/languageControls'
 import { describeTranslation, isTranslationPending } from '../lib/transcript'
 import type { LogMessage } from '../lib/types'
@@ -12,8 +15,19 @@ function describeMessage(message: LogMessage): string {
 }
 
 export function RecordPage() {
+  const { session } = useAuth()
+  // RequireAuth guarantees a session before this page is ever reached; the
+  // split into RecordPageContent keeps useWebSocket (which needs a real
+  // session, for the authenticate handshake) from ever being called
+  // conditionally.
+  if (!session) return null
+  return <RecordPageContent session={session} />
+}
+
+function RecordPageContent({ session }: { session: Session }) {
   const {
     status,
+    isAuthenticated,
     messages,
     partialTranscript,
     transcriptRows,
@@ -22,7 +36,7 @@ export function RecordPage() {
     startTranscription,
     stopTranscription,
     setTargetLanguage,
-  } = useWebSocket()
+  } = useWebSocket(session)
   const { status: micStatus, start, stop } = useMicrophone(sendAudioChunk, getChunkDurationMs())
   const [sourceLanguage, setSourceLanguage] = useState<string | null>(null)
   const [isStartingRecording, setIsStartingRecording] = useState(false)
@@ -48,14 +62,16 @@ export function RecordPage() {
 
   return (
     <div className="app">
-      <p>WebSocket status: {status}</p>
+      <p>WebSocket status: {describeConnectionStatus(status, isAuthenticated)}</p>
 
       <div className="mic">
         <p>Microphone status: {micStatus}</p>
         {micStatus === 'recording' ? (
           <button onClick={handleStopRecording}>Stop recording</button>
         ) : (
-          <button onClick={handleStartRecording}>Start recording</button>
+          <button onClick={handleStartRecording} disabled={!isAuthenticated}>
+            Start recording
+          </button>
         )}
       </div>
 

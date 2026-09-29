@@ -36,6 +36,16 @@ export type SetTargetLanguageMessage = {
   target_language: string
 }
 
+export type AuthenticateMessage = {
+  type: 'authenticate'
+  access_token: string
+}
+
+export type AuthenticatedMessage = {
+  type: 'authenticated'
+  user_id: string
+}
+
 export type LogMessage = EchoMessage | ErrorMessage
 
-export type ServerMessage = LogMessage | PartialTranscriptMessage | TranscriptMessage
+export type ServerMessage = LogMessage | PartialTranscriptMessage | TranscriptMessage | AuthenticatedMessage
