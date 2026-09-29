@@ -22,26 +22,45 @@ backend never sees a password, only the JWT that comes back from it:
 └─────────────┘    session + JWT      └──────────────┘
 ```
 
-Once signed in, that JWT rides along on every WebSocket message, and the audio itself streams
-continuously rather than in fixed-size chunks:
+A session itself is created up front over the REST API, not implicitly by the WebSocket — the
+home page's "New session" modal names it, then opens its live view, which joins that same session
+over the WebSocket rather than creating a new one:
 
 ```
-┌─────────────────────┐                    ┌────────────┐                    ┌───────────────┐
-│   Browser (React)   │── raw PCM + JWT ──►│  FastAPI   │─── realtime WS ───►│  ElevenLabs   │
-│ mic -> AudioWorklet │◄ partial/committed │  (Python)  │◄ partial/committed │  Scribe (RT)  │
-└─────────────────────┘                    └────────────┘                    └───────────────┘
+┌──────────┐  POST /api/sessions  ┌──────────┐
+│  Browser │ ────────────────────►│ FastAPI  │──► Supabase (sessions row created)
+│  (home)  │ ◄────────────────────│  (REST)  │
+└──────────┘   {id, title, ...}   └──────────┘
+     │
+     │ navigate to /sessions/:id/live
+     ▼
+```
+
+Once on the live view, that JWT rides along on every WebSocket message, the connection joins the
+session that was just created (or an existing one, on a pause/resume), and the audio itself
+streams continuously rather than in fixed-size chunks:
+
+```
+┌─────────────────────┐  authenticate, join_session   ┌────────────┐                    ┌───────────────┐
+│   Browser (React)   │───────► raw PCM + JWT ───────►│  FastAPI   │─── realtime WS ───►│  ElevenLabs   │
+│ mic -> AudioWorklet │◄── session_joined, partial/ ───│  (Python)  │◄ partial/committed │  Scribe (RT)  │
+└─────────────────────┘        committed transcripts   └────────────┘                    └───────────────┘
 ```
 
 FastAPI then calls DeepL (REST) to translate each committed transcript, and Supabase (Postgres,
 via that same user's JWT so Row Level Security applies) to persist it - both described below.
 
-**Flow, once signed in:**
+**Flow, once a session is joined:**
 1. Browser captures mic audio with the Web Audio API + an `AudioWorklet`, streaming raw PCM continuously over WebSocket (no `MediaRecorder`/WebM — ElevenLabs' realtime endpoint needs uncompressed audio, so there's no container to convert)
 2. Backend proxies that stream straight through to ElevenLabs' realtime STT WebSocket and relays `partial_transcript`/`committed_transcript` events back as they arrive
 3. On each committed transcript, backend calls DeepL for translation
 4. Backend pushes `{original_text, translated_text}` back over the same WebSocket
-5. Backend persists the message to Supabase, scoped to the signed-in user — Row Level Security, not application code, is what stops one user from ever reading another's rows
+5. Backend persists the message to Supabase, scoped to the signed-in user and the joined session — Row Level Security, not application code, is what stops one user from ever reading another's rows
 6. Browser renders both texts side by side, live
+
+Recording can be paused and resumed any number of times within the same session (pausing doesn't
+end it — only leaving the live view does); the session's full transcript stays available afterward
+at its own read-only URL, from the sessions list on the home page.
 
 ## Stack
 
@@ -64,7 +83,7 @@ Everything runs on `localhost`. No deployment in v1.
 - [x] **Phase 1 — Audio streaming**: mic → realtime STT → text on screen, persisted to Supabase
 - [x] **Phase 2 — Translation**: target language selector, DeepL, side-by-side view
 - [ ] **Phase 3 — Accounts** *(current)*: Supabase Auth (email + password), React Router (`/login` + a guarded app), sessions scoped to the signed-in user via Row Level Security
-- [ ] **Phase 4 — History**: list past sessions, open one on its own URL, re-translate to another language on demand, rename/delete
+- [ ] **Phase 4 — Session-first flow**: name and create a session explicitly (home page → "New session"), its live view joins that session over the WebSocket and can be paused/resumed without ending it, a past session's full transcript is a read-only page, re-translate it to another language on demand, rename/delete from the home list
 - [ ] **Phase 5 — TTS**: play a translated message back, generated once and cached in Supabase Storage
 - [ ] **Phase 6 — Spike**: speaker labels, only if a real multi-mic use case shows up; further voice-activity-detection tuning
 
@@ -75,7 +94,7 @@ Everything runs on `localhost`. No deployment in v1.
 1. Create a project at [supabase.com](https://supabase.com) (or use an existing one).
 2. **Authentication → Providers → Email**: make sure it's enabled.
 3. **Authentication → Providers → Email → "Confirm email"**: turn this **off** for local dev (recommended) — with it on, registering returns no session until the user clicks a confirmation link, which needs an email template and a working "from" address neither of which this project sets up. Leave it on only if you specifically want to test that flow.
-4. **SQL Editor → New query**: run `supabase/migrations/001_initial.sql`, then `supabase/migrations/003_auth_and_rls.sql` (`002_disable_rls.sql` is superseded by 003 and only kept as history — skip it). This creates the schema, adds `sessions.user_id`, and turns on Row Level Security with owner-only policies.
+4. **SQL Editor → New query**: run, in order, `supabase/migrations/001_initial.sql`, `003_auth_and_rls.sql`, then `004_nullable_target_language.sql` (`002_disable_rls.sql` is superseded by 003 and only kept as history — skip it). This creates the schema, adds `sessions.user_id`, turns on Row Level Security with owner-only policies, and (004) makes `sessions.target_language` nullable and adds a `unique(session_id, sequence)` constraint on `messages`.
 5. **Project Settings → API**: copy the Project URL and the `anon` `public` key (never the `service_role` key — it bypasses Row Level Security entirely) for the `.env` files below.
 
 ### Backend
@@ -98,7 +117,10 @@ npm run dev   # http://localhost:5173
 ```
 
 Open `http://localhost:5173`, register an account (redirects to `/login` automatically until you
-do), then start recording.
+do), click **New session** on the home page and give it a name, then start recording on its live
+view. Pause and resume as needed; **End session** returns you to the home page, where the session
+now appears in the list — click it to revisit its full transcript, or use the row's Rename/Delete
+actions.
 
 ## Decisions log
 

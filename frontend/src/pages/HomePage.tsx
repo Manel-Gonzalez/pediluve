@@ -14,7 +14,7 @@ const PAGE_SIZE = 20
 export function HomePage() {
   const { session } = useAuth()
   // RequireAuth guarantees a session before this page is ever reached - see
-  // RecordPage.tsx for the same split-into-Content pattern and why.
+  // LiveSessionPage.tsx for the same split-into-Content pattern and why.
   if (!session) return null
   return <HomePageContent session={session} />
 }

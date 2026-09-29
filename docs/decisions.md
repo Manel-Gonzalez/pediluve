@@ -191,6 +191,107 @@ area with no payoff yet for a single-developer local project where the developer
 own password. Straightforward to add later using supabase-js's existing support if this ever needs
 more than one real user.
 
+## Phase 4: session-first flow
+
+**Context:** a product-flow correction (see "Phase reorder" above for the shape of these
+mid-project corrections) replaced the original Phase 4 assumption (a session created implicitly
+the moment recording starts) with: a session is created explicitly, by name, from a "New session"
+modal on the home page; the home page lists every session as a CRUD list (revisit, rename,
+delete); and **one session spans multiple record/pause/resume cycles**, not a fresh session per
+stop/start.
+
+**Create-by-name via REST, not implicit create on start.** `POST /api/sessions` (KAN-24) is now
+the only way a `sessions` row is created; `/ws`'s `_start_transcription` no longer calls
+`create_session` at all (KAN-36) - a `create_session` call was removed from there and a test
+(`test_start_transcription_never_calls_create_session`) added specifically to keep it removed.
+**Why:** the whole point of the redesign is that a session is a named thing the user chooses to
+start ("imagine a meeting: you name it, then you record into it"), not a byproduct of pressing a
+mic button. REST is also just the natural fit for "create, then navigate to the new resource's
+URL" - a WebSocket message has no equivalent to "the browser navigates to
+`/sessions/<new-id>/live`" without extra plumbing. **Revisit if:** a "start recording immediately,
+name it later" flow is ever wanted (e.g. a walk-up dictation use case) - a session would need an
+initial placeholder title, and `_start_transcription` would need to create one again.
+
+**One session, many record cycles.** `start_transcription`/`stop_transcription` changed meaning
+from create/end to resume/pause (KAN-36): stopping no longer ends the session - only a real
+disconnect does. `sequence`, `committed_texts`, and `db_session_id` are all seeded once by
+`join_session` and carry across every pause/resume in the same visit, instead of resetting per
+recording. **Why:** matches the mental model directly - a meeting has one transcript, however many
+times recording is paused and resumed during it, not one transcript per unpause. **Revisit if:** a
+use case needs *separate* transcripts within one "meeting" (e.g. distinct agenda items) - that
+needs an explicit sub-session or section concept, not just more pause/resume cycles on one
+`sessions` row.
+
+**`join_session` as its own WS message, not a query param or folded into `authenticate`.**
+Considered: `?session_id=` on the WS URL, or adding `session_id` to the `authenticate` payload.
+**Why `join_session` won:** a query param on the WS URL would put the session id in server access
+logs, the same reasoning already given above for sending the JWT as a message rather than a query
+param; folding it into `authenticate` conflates two independent concerns (who you are vs. which
+session this connection is for), and would make re-authenticating on token refresh awkwardly also
+re-specify the session every time. A separate message keeps `authenticate` unchanged and makes
+"authenticated but not yet joined" a real, representable state - the frontend uses exactly that
+state (`joinStatus`) to disable Start/target-language controls until `session_joined` arrives.
+**Revisit if:** a connection ever needs to join more than one session at once - not a current use
+case, since one WS connection is one live view.
+
+**4404 as the "session not found" close code.** `SESSION_NOT_FOUND_CLOSE_CODE = 4404` covers an
+unknown id, a non-UUID id, and someone else's id under RLS - all three look identical to the
+client, since RLS makes "not yours" and "doesn't exist" indistinguishable at the DB layer (the
+same reasoning the REST 404 mapping below relies on). **Why a new code, not reusing 4401:** 4401
+already means "authentication problem, log in again" (KAN-18) - conflating "your session id was
+wrong" with "your login was wrong" would send the user down the wrong recovery path, since
+re-logging in doesn't fix a bad link. **Revisit if:** the close-code space needs auditing again -
+4401/4404/4503 are all in the private range (4000-4999), picked to avoid colliding with any
+registered WebSocket close code.
+
+**REST 404 for a malformed id too, not FastAPI's default 422 or a raw 500.** `routers/sessions.py`
+validates `{id}` is a UUID in-route before ever querying Supabase, mapping a bad UUID straight to
+404. **Why:** a garbage id (`/api/sessions/not-a-uuid`) is exactly as "not found" from the caller's
+perspective as a well-formed UUID for a row that doesn't exist or isn't theirs - three
+different-looking failures (422 for a bad shape, 500 for a raw Postgres error on the UUID cast, 404
+for a real miss) would need three different handling paths in the frontend for what is, to the
+user, one outcome: "that link doesn't work anymore." One response shape means one place to handle
+it - `ApiError(404)` → "Session not found" + a link home, on both `LiveSessionPage` and
+`SessionDetailPage`. **Revisit if:** a caller ever needs to tell "malformed" apart from "real miss"
+(e.g. to log obviously-forged ids differently) - that's a case for a distinct error code in the
+response body, not a different HTTP status.
+
+**Pagination: `limit`/`offset` with a `has_more` flag, not a total count.** `GET /api/sessions`
+fetches `limit + 1` rows to know whether there's a next page, rather than running a separate
+`COUNT(*)` query. **Why:** a session list is browsed, not jumped-to-page-N - "is there more" is all
+"Load more" needs, and a second count query would double the DB round trips for a number the UI
+never displays. `limit` is clamped server-side to 100 regardless of what's requested, so a client
+bug (or a tampered request) can't force an unbounded fetch. **Revisit if:** the UI ever wants a
+numbered pager or a "showing X of Y" count - that needs the real total, which is the point where
+the extra `COUNT(*)` query becomes worth its cost.
+
+**Pause vs. "End session."** The live view's mic button is Start → Pause → Resume (never Stop); a
+separate "End session" button explicitly leaves the live view and navigates home. **Why a separate
+action, not overloading Pause:** per "one session, many record cycles" above, pausing must not end
+the DB session - but the user still needs a clear, deliberate way to say "I'm done with this
+meeting" and leave, distinct from "I'm just pausing to let someone else talk." One button for both
+would mean either pausing accidentally ends the session, or leaving the page requires knowing to
+pause first. **Revisit if:** user testing shows the two actions get confused for each other - a
+single button with a confirm step is the likely fix, not re-merging the two actions.
+
+**`ended_at` now means "last time a live view left this session," not "recording finished."** It's
+written exactly once per visit, in `_cleanup` on disconnect - never in `_pause_transcription`,
+never on every stop (KAN-36). **Why:** the earlier meaning ("this session is over") stopped being
+true the moment resume became possible - a session can be revisited (a fresh WS connection,
+a fresh `join_session`) after `ended_at` was already set, and that reconnect correctly overwrites
+it again on the next disconnect. **Revisit if:** a genuine "this session is permanently closed"
+state is ever needed (e.g. to block further recording into an old session) - that's a different
+column (an explicit `closed` flag), not a repurposing of `ended_at` again.
+
+**The "unfinished" badge was dropped, not built.** An earlier reading of the spec assumed the home
+list would flag a session with `ended_at IS NULL` as "unfinished," implying it stopped
+mid-recording (e.g. a crash). **Why dropped:** now that pausing deliberately leaves `ended_at` null
+until the *next* disconnect (see above), a null `ended_at` no longer distinguishes "abandoned
+mid-recording" from "perfectly normal, currently paused, might be resumed any time" - the signal
+the badge was meant to carry doesn't exist under the new semantics. **Revisit if:** a real "was
+this actually abandoned" signal is wanted - that needs its own explicit state, not an inference
+from `ended_at`.
+
 ## Phase 4: re-translating a past session's history is on-demand, not persisted
 
 **Context:** KAN-10's history view lets a user open a past session and view it translated into a

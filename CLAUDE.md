@@ -32,31 +32,38 @@ pediluve/
 │   └── decisions.md       ← why X over Y, keep it updated
 ├── frontend/
 │   ├── src/
-│   │   ├── components/    ← AuthForm, Nav, RequireAuth (route guard)
-│   │   ├── hooks/         ← useWebSocket, useMicrophone, useAuth (AuthProvider)
-│   │   ├── pages/         ← LoginPage, RecordPage (routed from App.tsx)
-│   │   ├── lib/           ← api client, types, auth/languageControls helpers
+│   │   ├── components/    ← AuthForm, Nav, RequireAuth (route guard), NewSessionModal,
+│   │   │                    TranscriptRow (shared by the live view and history), SessionListRow
+│   │   ├── hooks/         ← useWebSocket (join_session/pause-resume aware), useMicrophone,
+│   │   │                    useAuth (AuthProvider)
+│   │   ├── pages/         ← LoginPage, HomePage (sessions list + "New session"), LiveSessionPage
+│   │   │                    (/sessions/:id/live), SessionDetailPage (/sessions/:id, read-only)
+│   │   ├── lib/           ← api client (REST + ApiError), types, auth/languageControls/
+│   │   │                    recording/sessions/sessionTitle/routes helpers
 │   │   ├── audio/         ← pcm-worklet.js (AudioWorkletProcessor)
 │   │   ├── App.tsx        ← route table only (RequireAuth + pages/)
 │   │   └── main.tsx       ← AuthProvider + BrowserRouter wiring
 │   ├── package.json
 │   └── vite.config.ts
 ├── backend/
-│   ├── main.py            ← FastAPI app, WebSocket endpoint
-│   ├── routers/           ← ws.py, me.py (GET /me)
+│   ├── main.py            ← FastAPI app, WebSocket + REST routers
+│   ├── routers/           ← ws.py (join_session/pause-resume), me.py (GET /me),
+│   │                        sessions.py (REST CRUD + on-demand translate)
 │   ├── services/
 │   │   ├── elevenlabs.py
-│   │   ├── deepl.py
+│   │   ├── deepl.py       ← translate() + translate_many() (batched re-translation)
 │   │   ├── supabase.py
 │   │   └── auth.py        ← verify_access_token (Supabase Auth)
-│   ├── models/            ← Pydantic schemas
+│   ├── models/            ← Pydantic schemas (messages.py, sessions.py, auth.py)
 │   ├── requirements.txt
 │   └── .env               ← gitignored
 └── supabase/
     └── migrations/
         ├── 001_initial.sql
-        ├── 002_disable_rls.sql   ← superseded by 003, kept as history
-        └── 003_auth_and_rls.sql  ← sessions.user_id, RLS + owner policies
+        ├── 002_disable_rls.sql            ← superseded by 003, kept as history
+        ├── 003_auth_and_rls.sql           ← sessions.user_id, RLS + owner policies
+        └── 004_nullable_target_language.sql  ← sessions.target_language nullable,
+                                                unique(session_id, sequence) on messages
 ```
 
 ## Conventions
@@ -85,13 +92,17 @@ routing moved here instead of Phase 4). Sessions and messages get scoped to the 
 (`sessions.user_id`, RLS policies so a user only ever sees their own data). Comes before Phase 4
 because "list of my past sessions" is meaningless without knowing who "I" am first.
 
-**Phase 4:** sessions list page (the authenticated user's own sessions) → open a past session,
-each on its own routable URL (added to the router introduced in Phase 3) so a reload doesn't bounce
-back to home → re-translate to a different language **computed on demand, not persisted** (the original live-session
-translation stays in `messages.translated_text`/`target_language` untouched; viewing history in
-another language just calls DeepL again for that view) → rename or delete a session (mini CRUD;
-`sessions.title` already exists for the rename, `messages` already cascade-deletes with the
-session).
+**Phase 4:** session-first flow (see `docs/decisions.md` for the full reasoning behind each piece
+below). Home page (`/`) lists the signed-in user's own sessions — the list is the CRUD: rename and
+delete are row actions there, not on a detail page. A "New session" modal creates one by name via
+`POST /api/sessions`, then opens its live view at `/sessions/:id/live`, where the WebSocket
+`join_session`s that id rather than the connection implicitly creating one. **One session spans
+multiple record/pause/resume cycles**: stopping only pauses (`sequence`/`committed_texts`/
+`db_session_id` persist across pauses within the same visit); only a disconnect ends it
+(`ended_at` — "last time a live view left this session," written once per visit). A past session's
+full transcript is a separate read-only page at `/sessions/:id`, re-translating it to another
+language for viewing **computed on demand, not persisted** (the original live-session translation
+stays in `messages.translated_text`/`target_language` untouched).
 
 **Phase 5:** "play" button per translated message → ElevenLabs TTS → audio generated once and
 cached in Supabase Storage (a repeat play serves the stored file, not a fresh paid TTS call) →
@@ -128,14 +139,24 @@ Don't ask, just do:
 
 Phase 2 — done and merged to `main`.
 
-Phase 3 (current) — user accounts, in progress. Implemented, tested, and code-reviewed: KAN-14
-(`GET /me` + `verify_access_token`), KAN-16 (per-user Supabase client, RLS-safe writes), KAN-18
-(`/ws` authenticate handshake + auth gate), KAN-15 (frontend `supabase-js` client, `AuthProvider`,
-`AuthForm`), KAN-17 (React Router shell — `/login`, `RequireAuth`, `RecordPage`, `Nav`) and KAN-19
-(`useWebSocket` authenticate/refresh/close-on-signout). KAN-13 (migration `003_auth_and_rls.sql`)
-is written but **not yet applied** to the real Supabase project — apply it via `README.md`'s
-Supabase setup steps once ready. Nothing in Phase 3 has been verified end-to-end yet in a real
-browser with a real Supabase project and RLS on (pending: apply the migration, then walk through
-login/register, two-account RLS isolation, sign-out mid-recording, and a recording surviving a JWT
-refresh). Backend tests (`pytest`, 85 passing) and frontend tests (`vitest`, 29 passing). Next:
-apply migration 003, verify Phase 3 end-to-end, merge to `main`.
+Phase 3 — user accounts, code complete: KAN-14 (`GET /me` + `verify_access_token`), KAN-16
+(per-user Supabase client, RLS-safe writes), KAN-18 (`/ws` authenticate handshake + auth gate),
+KAN-15 (frontend `supabase-js` client, `AuthProvider`, `AuthForm`), KAN-17 (React Router shell —
+`/login`, `RequireAuth`, `Nav`), and KAN-19 (`useWebSocket` authenticate/refresh/close-on-signout).
+KAN-13 (migration `003_auth_and_rls.sql`) has been applied to the real Supabase project, with RLS
+isolation confirmed against two real accounts (distinct `user_id`s, each only seeing their own
+`sessions` rows). Not yet merged to `main`.
+
+Phase 4 (current) — session-first flow, code complete: KAN-22 (migration
+`004_nullable_target_language.sql` — nullable `sessions.target_language`, `unique(session_id,
+sequence)` on `messages`), KAN-21 (session read/update/delete functions + Pydantic models in
+`models/sessions.py`), KAN-36 (`/ws` `join_session`/pause-resume rewrite, `SESSION_NOT_FOUND_CLOSE_CODE`
+4404), KAN-24 (`routers/sessions.py` REST CRUD), KAN-25 (on-demand `/translate` endpoint +
+`deepl.translate_many`), KAN-23 (REST API client, `HomePage`), KAN-37 (`NewSessionModal`), KAN-38
+(`LiveSessionPage` at `/sessions/:id/live`, `join_session`-aware `useWebSocket`), KAN-26
+(read-only `SessionDetailPage` at `/sessions/:id`), KAN-39 (rename/delete on `HomePage` rows), and
+KAN-40 (this docs update). Backend tests (`pytest`, 158 passing) and frontend tests (`vitest`, 65
+passing). Not yet verified end-to-end in a real browser with migration 004 applied (pending: apply
+it, then walk through create → record → pause → resume → end → revisit → rename → delete against a
+real Supabase project). Per the phase-gate rule above, Phase 3 merges to `main` first. Next: apply
+migration 004, verify Phase 4 end-to-end, merge Phase 3 then Phase 4 to `main`.
