@@ -4,8 +4,6 @@ from supabase import AsyncClient, create_async_client
 
 from services.auth import AuthenticatedUser
 
-DEFAULT_TARGET_LANGUAGE = "en"
-
 
 async def client_for(access_token: str) -> AsyncClient:
     # A fresh client per call, authenticated as the given user's access
@@ -21,7 +19,7 @@ async def client_for(access_token: str) -> AsyncClient:
 async def create_session(
     user: AuthenticatedUser,
     source_language: str | None = None,
-    target_language: str = DEFAULT_TARGET_LANGUAGE,
+    target_language: str | None = None,
 ) -> str:
     # user_id is set explicitly here (redundant with the sessions.user_id
     # column's `default auth.uid()`) so the write is self-documenting and so
