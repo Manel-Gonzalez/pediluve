@@ -149,14 +149,15 @@ isolation confirmed against two real accounts (distinct `user_id`s, each only se
 
 Phase 4 (current) — session-first flow, code complete: KAN-22 (migration
 `004_nullable_target_language.sql` — nullable `sessions.target_language`, `unique(session_id,
-sequence)` on `messages`), KAN-21 (session read/update/delete functions + Pydantic models in
-`models/sessions.py`), KAN-36 (`/ws` `join_session`/pause-resume rewrite, `SESSION_NOT_FOUND_CLOSE_CODE`
-4404), KAN-24 (`routers/sessions.py` REST CRUD), KAN-25 (on-demand `/translate` endpoint +
+sequence)` on `messages` — **applied** to the real Supabase project), KAN-21 (session
+read/update/delete functions + Pydantic models in `models/sessions.py`), KAN-36 (`/ws`
+`join_session`/pause-resume rewrite, `SESSION_NOT_FOUND_CLOSE_CODE` 4404), KAN-24
+(`routers/sessions.py` REST CRUD), KAN-25 (on-demand `/translate` endpoint +
 `deepl.translate_many`), KAN-23 (REST API client, `HomePage`), KAN-37 (`NewSessionModal`), KAN-38
 (`LiveSessionPage` at `/sessions/:id/live`, `join_session`-aware `useWebSocket`), KAN-26
 (read-only `SessionDetailPage` at `/sessions/:id`), KAN-39 (rename/delete on `HomePage` rows), and
 KAN-40 (this docs update). Backend tests (`pytest`, 158 passing) and frontend tests (`vitest`, 65
-passing). Not yet verified end-to-end in a real browser with migration 004 applied (pending: apply
-it, then walk through create → record → pause → resume → end → revisit → rename → delete against a
-real Supabase project). Per the phase-gate rule above, Phase 3 merges to `main` first. Next: apply
-migration 004, verify Phase 4 end-to-end, merge Phase 3 then Phase 4 to `main`.
+passing). Not yet verified end-to-end in a real browser (pending: walk through create → record →
+pause → resume → end → revisit → rename → delete against the real Supabase project, now that
+migration 004 is live). Per the phase-gate rule above, Phase 3 merges to `main` first. Next: verify
+Phase 4 end-to-end, merge Phase 3 then Phase 4 to `main`.
