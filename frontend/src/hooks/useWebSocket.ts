@@ -75,6 +75,10 @@ export function useWebSocket(session: Session) {
         setPartialTranscript('')
         return
       }
+      if (data.type === 'retranslated_transcripts') {
+        setTranscriptRows(data.transcripts)
+        return
+      }
       setMessages((prev) => [...prev, data])
     }
 

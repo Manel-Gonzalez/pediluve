@@ -482,6 +482,282 @@ def test_set_target_language_triggers_translation_on_the_next_committed_transcri
         ws.send_json({"type": "stop_transcription"})
 
 
+def test_set_target_language_change_retranslates_already_committed_transcripts(
+    monkeypatch, authenticated_ws
+):
+    async def fake_translate(text, target_language):
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", fake_translate)
+
+    canned = [{"message_type": "committed_transcript", "text": "hello"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+        ws.send_json({"type": "start_transcription"})
+        assert ws.receive_json() == {
+            "type": "transcript",
+            "original_text": "hello",
+            "translated_text": "[es] hello",
+            "target_language": "es",
+        }
+
+        ws.send_json({"type": "set_target_language", "target_language": "fr"})
+        assert ws.receive_json() == {
+            "type": "retranslated_transcripts",
+            "target_language": "fr",
+            "transcripts": [
+                {
+                    "type": "transcript",
+                    "original_text": "hello",
+                    "translated_text": "[fr] hello",
+                    "target_language": "fr",
+                }
+            ],
+        }
+        ws.send_json({"type": "stop_transcription"})
+
+
+def test_set_target_language_to_the_same_value_does_not_retranslate(monkeypatch, authenticated_ws):
+    async def fake_translate(text, target_language):
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", fake_translate)
+
+    canned = [{"message_type": "committed_transcript", "text": "hello"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+        ws.send_json({"type": "start_transcription"})
+        ws.receive_json()  # the original transcript
+
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+        ws.send_json({"type": "message", "text": "still alive"})
+        assert ws.receive_json() == {"type": "echo", "text": "still alive"}
+        ws.send_json({"type": "stop_transcription"})
+
+
+def test_set_target_language_with_no_committed_transcripts_yet_does_not_retranslate(
+    authenticated_ws,
+):
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+        ws.send_json({"type": "set_target_language", "target_language": "fr"})
+        ws.send_json({"type": "message", "text": "still alive"})
+        assert ws.receive_json() == {"type": "echo", "text": "still alive"}
+
+
+def test_retranslation_does_not_block_the_receive_loop(monkeypatch, authenticated_ws):
+    async def slow_translate(text, target_language):
+        await asyncio.sleep(0.3)
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", slow_translate)
+
+    canned = [{"message_type": "committed_transcript", "text": "hello"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "start_transcription"})
+        ws.receive_json()  # original transcript, untranslated (no target language set yet)
+
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+        started = time.monotonic()
+        ws.send_json({"type": "message", "text": "still alive"})
+        assert ws.receive_json() == {"type": "echo", "text": "still alive"}
+        # The echo must not wait behind the slow retranslation - it should come
+        # back almost immediately, well under the translate call's 0.3s delay.
+        assert time.monotonic() - started < 0.15
+        ws.send_json({"type": "stop_transcription"})
+
+
+def test_a_later_target_language_change_supersedes_an_in_flight_retranslation(
+    monkeypatch, authenticated_ws
+):
+    async def slow_translate(text, target_language):
+        delay = {"de": 0.15, "es": 0.02}[target_language]
+        await asyncio.sleep(delay)
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", slow_translate)
+
+    canned = [{"message_type": "committed_transcript", "text": "hello"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "start_transcription"})
+        ws.receive_json()  # original transcript, untranslated
+
+        ws.send_json({"type": "set_target_language", "target_language": "de"})
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+
+        # Only the latest ("es") retranslation should ever be sent - the
+        # slower, now-superseded "de" one must be dropped, not just delayed.
+        assert ws.receive_json() == {
+            "type": "retranslated_transcripts",
+            "target_language": "es",
+            "transcripts": [
+                {
+                    "type": "transcript",
+                    "original_text": "hello",
+                    "translated_text": "[es] hello",
+                    "target_language": "es",
+                }
+            ],
+        }
+
+        # Wait past "de"'s slower delay to prove its stale result never
+        # arrives afterward either.
+        time.sleep(0.2)
+        ws.send_json({"type": "message", "text": "still alive"})
+        assert ws.receive_json() == {"type": "echo", "text": "still alive"}
+        ws.send_json({"type": "stop_transcription"})
+
+
+def test_committed_texts_persist_across_multiple_recordings_in_the_same_connection(
+    monkeypatch, authenticated_ws
+):
+    async def fake_translate(text, target_language):
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", fake_translate)
+
+    canned = [{"message_type": "committed_transcript", "text": "hello"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "start_transcription"})
+        ws.receive_json()  # "hello", untranslated
+        ws.send_json({"type": "stop_transcription"})
+
+        # A second recording in the same connection commits "world" - the
+        # fake session class's events() reads canned live, so mutating it in
+        # place feeds the new session a different transcript.
+        canned.clear()
+        canned.append({"message_type": "committed_transcript", "text": "world"})
+
+        ws.send_json({"type": "start_transcription"})
+        ws.receive_json()  # "world", untranslated
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+
+        # Both recordings' lines must still be there - resetting committed
+        # texts per recording would have silently dropped "hello" here.
+        assert ws.receive_json() == {
+            "type": "retranslated_transcripts",
+            "target_language": "es",
+            "transcripts": [
+                {
+                    "type": "transcript",
+                    "original_text": "hello",
+                    "translated_text": "[es] hello",
+                    "target_language": "es",
+                },
+                {
+                    "type": "transcript",
+                    "original_text": "world",
+                    "translated_text": "[es] world",
+                    "target_language": "es",
+                },
+            ],
+        }
+        ws.send_json({"type": "stop_transcription"})
+
+
+async def test_a_transcript_committed_during_retranslation_is_included_in_the_result(monkeypatch):
+    from routers.ws import ConnectionHandler
+
+    sent: list[dict] = []
+
+    class FakeWebSocket:
+        async def send_json(self, payload):
+            sent.append(payload)
+
+    handler = ConnectionHandler(FakeWebSocket())
+    handler.committed_texts = ["hello"]
+    handler.target_language = "es"
+
+    async def slow_translate(text, target_language):
+        if text == "hello":
+            # Simulate a normal committed transcript arriving on the main
+            # receive loop while this retranslation of "hello" is in flight.
+            await handler._handle_committed_transcript("world")
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", slow_translate)
+
+    await handler._retranslate_committed_texts("es", handler._retranslation_generation)
+
+    # "world" was already sent once via the normal path...
+    assert sent[0] == {
+        "type": "transcript",
+        "original_text": "world",
+        "translated_text": "[es] world",
+        "target_language": "es",
+    }
+    # ...and the wholesale-replacing retranslated_transcripts result must
+    # still include it - dropping it here would erase it from the screen
+    # even though it was just correctly delivered.
+    assert sent[1] == {
+        "type": "retranslated_transcripts",
+        "target_language": "es",
+        "transcripts": [
+            {
+                "type": "transcript",
+                "original_text": "hello",
+                "translated_text": "[es] hello",
+                "target_language": "es",
+            },
+            {
+                "type": "transcript",
+                "original_text": "world",
+                "translated_text": "[es] world",
+                "target_language": "es",
+            },
+        ],
+    }
+
+
+async def test_a_superseded_retranslation_stops_calling_deepl_early(monkeypatch):
+    from routers.ws import ConnectionHandler
+
+    sent: list[dict] = []
+
+    class FakeWebSocket:
+        async def send_json(self, payload):
+            sent.append(payload)
+
+    handler = ConnectionHandler(FakeWebSocket())
+    handler.committed_texts = ["one", "two", "three"]
+    handler.target_language = "es"
+    handler._retranslation_generation = 1
+
+    translated: list[str] = []
+
+    async def translate_and_supersede(text, target_language):
+        translated.append(text)
+        if text == "one":
+            # Simulate a further language change landing while this
+            # translation is still in flight.
+            handler._retranslation_generation = 2
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", translate_and_supersede)
+
+    await handler._retranslate_committed_texts("es", 1)
+
+    # "two" and "three" must never reach DeepL once superseded, and no
+    # (now-stale) result should be sent either.
+    assert translated == ["one"]
+    assert sent == []
+
+
 def test_set_target_language_is_invalid_without_a_target_language(authenticated_ws):
     with authenticated_ws() as ws:
         ws.send_json({"type": "set_target_language"})

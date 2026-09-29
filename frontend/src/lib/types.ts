@@ -46,6 +46,21 @@ export type AuthenticatedMessage = {
   user_id: string
 }
 
+// Sent when the target language changes mid-session and there's already
+// committed transcript to retranslate - replaces the whole transcript list
+// rather than patching individual rows (no per-message id goes over the
+// wire for that).
+export type RetranslatedTranscriptsMessage = {
+  type: 'retranslated_transcripts'
+  target_language: string
+  transcripts: TranscriptMessage[]
+}
+
 export type LogMessage = EchoMessage | ErrorMessage
 
-export type ServerMessage = LogMessage | PartialTranscriptMessage | TranscriptMessage | AuthenticatedMessage
+export type ServerMessage =
+  | LogMessage
+  | PartialTranscriptMessage
+  | TranscriptMessage
+  | AuthenticatedMessage
+  | RetranslatedTranscriptsMessage
