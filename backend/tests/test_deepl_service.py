@@ -60,6 +60,26 @@ async def test_translate_sends_the_api_key_as_an_auth_header(fake_transport):
     assert sent.headers["authorization"] == "DeepL-Auth-Key test-key:fx"
 
 
+async def test_translate_strips_whitespace_from_the_api_key(monkeypatch):
+    transport = FakeTransport()
+    _patch_transport(monkeypatch, transport)
+    # A trailing newline/space from a copy-pasted .env value is a common mistake
+    # (see docs/decisions.md) - it must not end up inside the header value.
+    monkeypatch.setenv("DEEPL_API_KEY", "test-key:fx\n")
+
+    await deepl.translate("hello", "es")
+
+    sent = transport.requests[0]
+    assert sent.headers["authorization"] == "DeepL-Auth-Key test-key:fx"
+
+
+async def test_translate_raises_a_clear_error_when_the_api_key_is_empty(monkeypatch):
+    monkeypatch.setenv("DEEPL_API_KEY", "   ")
+
+    with pytest.raises(RuntimeError, match="DEEPL_API_KEY"):
+        await deepl.translate("hello", "es")
+
+
 async def test_translate_raises_on_a_deepl_error_response(monkeypatch):
     transport = FakeTransport(status_code=456, response_json={"message": "Quota exceeded"})
     _patch_transport(monkeypatch, transport)

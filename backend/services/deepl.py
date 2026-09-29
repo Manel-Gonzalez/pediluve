@@ -35,7 +35,12 @@ def _get_client() -> httpx.AsyncClient:
 
 async def translate(text: str, target_language: str) -> str:
     deepl_code = _TARGET_LANGUAGE_CODES.get(target_language, target_language.upper())
-    api_key = os.environ["DEEPL_API_KEY"]
+    # .strip(): a trailing newline/space from a copy-pasted .env value turns into
+    # an invalid HTTP header and fails as a confusing httpx.LocalProtocolError
+    # deep in the request internals rather than this clear message.
+    api_key = os.environ["DEEPL_API_KEY"].strip()
+    if not api_key:
+        raise RuntimeError("DEEPL_API_KEY is set but empty - check backend/.env")
     client = _get_client()
     response = await client.post(
         DEEPL_API_URL,
