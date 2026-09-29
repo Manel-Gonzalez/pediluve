@@ -9,6 +9,11 @@ import type { LogMessage, ServerMessage, TranscriptMessage } from '../lib/types'
 // before this hook is ever called (see pages/RecordPage.tsx).
 export function useWebSocket(session: Session) {
   const socketRef = useRef<WebSocket | null>(null)
+  // Always the latest session, read from inside onopen instead of the
+  // "session" the connect effect below closed over at mount - see onopen's
+  // comment for why the two are not interchangeable.
+  const sessionRef = useRef(session)
+  sessionRef.current = session
   const [status, setStatus] = useState<ConnectionStatus>('connecting')
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [messages, setMessages] = useState<LogMessage[]>([])
@@ -31,9 +36,15 @@ export function useWebSocket(session: Session) {
     socket.onopen = () => {
       if (socketRef.current !== socket) return
       setStatus('open')
-      // The connection is otherwise rejected: /ws requires "authenticate" as
-      // the first message (backend/routers/ws.py).
-      sendJson(buildAuthenticateMessage(session.access_token))
+      // Reads sessionRef, not the "session" this effect closed over at mount:
+      // a token refresh landing while the socket was still CONNECTING would
+      // otherwise be lost - the effect below only re-sends on a *change* of
+      // session.access_token, which may already have fired (as a no-op,
+      // socket not OPEN yet) before this handler runs, leaving nothing to
+      // trigger a resend once it actually opens. sessionRef.current is always
+      // the token from the most recent render, so this always authenticates
+      // with whatever's current the moment the handshake actually happens.
+      sendJson(buildAuthenticateMessage(sessionRef.current.access_token))
     }
     socket.onclose = () => {
       if (socketRef.current !== socket) return

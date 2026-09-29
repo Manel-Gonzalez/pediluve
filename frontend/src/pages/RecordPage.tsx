@@ -74,6 +74,17 @@ function RecordPageContent({ session }: { session: Session }) {
     }
   }, [stop, stopTranscription])
 
+  // The socket can also close unexpectedly while still recording (a rejected
+  // token refresh, a network drop, the backend restarting) - without this,
+  // the mic keeps capturing and streaming into a socket that silently drops
+  // everything (sendAudioChunk's readyState guard no-ops), with nothing
+  // visible beyond the status line changing.
+  useEffect(() => {
+    if (status === 'closed' && micStatus === 'recording') {
+      stop()
+    }
+  }, [status, micStatus, stop])
+
   return (
     <div className="app">
       <p>WebSocket status: {describeConnectionStatus(status, isAuthenticated)}</p>
