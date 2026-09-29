@@ -77,6 +77,18 @@ non-null for that session, not just read `sessions.target_language`, to know
 whether translation was ever actually used. Consider making the column nullable
 at that point instead of carrying the placeholder further.
 
+**Resolved in Phase 4 (KAN-22):** `supabase/migrations/004_nullable_target_language.sql`
+drops the `not null` constraint, and `create_session()` no longer substitutes
+`DEFAULT_TARGET_LANGUAGE` when none was chosen - it now writes `NULL`
+directly, matching what `ConnectionHandler.target_language` (`None`) actually
+meant the whole time. `DEFAULT_TARGET_LANGUAGE` itself was removed as dead
+code (its only two call sites, `create_session()`'s own default and the
+`_start_transcription` call passing it, both went away with this fix). No
+backfill: existing rows with the old `"en"` placeholder keep it, harmlessly -
+they still correctly have no translated messages either way, per the
+"a future reader must not trust `sessions.target_language` alone" note above,
+which still holds for those specific pre-existing rows.
+
 **Also unverified (same network restriction):** whether DeepL's `/v2/translate`
 actually supports `CA` (Catalan) as a `target_lang` — `services/deepl.py`'s
 `_TARGET_LANGUAGE_CODES` maps it optimistically. If DeepL rejects it, `translate()`
@@ -179,6 +191,133 @@ area with no payoff yet for a single-developer local project where the developer
 own password. Straightforward to add later using supabase-js's existing support if this ever needs
 more than one real user.
 
+## Phase 4: session-first flow
+
+**Context:** a product-flow correction (see "Phase reorder" above for the shape of these
+mid-project corrections) replaced the original Phase 4 assumption (a session created implicitly
+the moment recording starts) with: a session is created explicitly, by name, from a "New session"
+modal on the home page; the home page lists every session as a CRUD list (revisit, rename,
+delete); and **one session spans multiple record/pause/resume cycles**, not a fresh session per
+stop/start.
+
+**Create-by-name via REST, not implicit create on start.** `POST /api/sessions` (KAN-24) is now
+the only way a `sessions` row is created; `/ws`'s `_start_transcription` no longer calls
+`create_session` at all (KAN-36) - a `create_session` call was removed from there and a test
+(`test_start_transcription_never_calls_create_session`) added specifically to keep it removed.
+**Why:** the whole point of the redesign is that a session is a named thing the user chooses to
+start ("imagine a meeting: you name it, then you record into it"), not a byproduct of pressing a
+mic button. REST is also just the natural fit for "create, then navigate to the new resource's
+URL" - a WebSocket message has no equivalent to "the browser navigates to
+`/sessions/<new-id>/live`" without extra plumbing. **Revisit if:** a "start recording immediately,
+name it later" flow is ever wanted (e.g. a walk-up dictation use case) - a session would need an
+initial placeholder title, and `_start_transcription` would need to create one again.
+
+**One session, many record cycles.** `start_transcription`/`stop_transcription` changed meaning
+from create/end to resume/pause (KAN-36): stopping no longer ends the session - only a real
+disconnect does. `sequence`, `committed_texts`, and `db_session_id` are all seeded once by
+`join_session` and carry across every pause/resume in the same visit, instead of resetting per
+recording. **Why:** matches the mental model directly - a meeting has one transcript, however many
+times recording is paused and resumed during it, not one transcript per unpause. **Revisit if:** a
+use case needs *separate* transcripts within one "meeting" (e.g. distinct agenda items) - that
+needs an explicit sub-session or section concept, not just more pause/resume cycles on one
+`sessions` row.
+
+**`join_session` as its own WS message, not a query param or folded into `authenticate`.**
+Considered: `?session_id=` on the WS URL, or adding `session_id` to the `authenticate` payload.
+**Why `join_session` won:** a query param on the WS URL would put the session id in server access
+logs, the same reasoning already given above for sending the JWT as a message rather than a query
+param; folding it into `authenticate` conflates two independent concerns (who you are vs. which
+session this connection is for), and would make re-authenticating on token refresh awkwardly also
+re-specify the session every time. A separate message keeps `authenticate` unchanged and makes
+"authenticated but not yet joined" a real, representable state - the frontend uses exactly that
+state (`joinStatus`) to disable Start/target-language controls until `session_joined` arrives.
+**Revisit if:** a connection ever needs to join more than one session at once - not a current use
+case, since one WS connection is one live view.
+
+**4404 as the "session not found" close code.** `SESSION_NOT_FOUND_CLOSE_CODE = 4404` covers an
+unknown id, a non-UUID id, and someone else's id under RLS - all three look identical to the
+client, since RLS makes "not yours" and "doesn't exist" indistinguishable at the DB layer (the
+same reasoning the REST 404 mapping below relies on). **Why a new code, not reusing 4401:** 4401
+already means "authentication problem, log in again" (KAN-18) - conflating "your session id was
+wrong" with "your login was wrong" would send the user down the wrong recovery path, since
+re-logging in doesn't fix a bad link. **Revisit if:** the close-code space needs auditing again -
+4401/4404/4503 are all in the private range (4000-4999), picked to avoid colliding with any
+registered WebSocket close code.
+
+**REST 404 for a malformed id too, not FastAPI's default 422 or a raw 500.** `routers/sessions.py`
+validates `{id}` is a UUID in-route before ever querying Supabase, mapping a bad UUID straight to
+404. **Why:** a garbage id (`/api/sessions/not-a-uuid`) is exactly as "not found" from the caller's
+perspective as a well-formed UUID for a row that doesn't exist or isn't theirs - three
+different-looking failures (422 for a bad shape, 500 for a raw Postgres error on the UUID cast, 404
+for a real miss) would need three different handling paths in the frontend for what is, to the
+user, one outcome: "that link doesn't work anymore." One response shape means one place to handle
+it - `ApiError(404)` → "Session not found" + a link home, on both `LiveSessionPage` and
+`SessionDetailPage`. **Revisit if:** a caller ever needs to tell "malformed" apart from "real miss"
+(e.g. to log obviously-forged ids differently) - that's a case for a distinct error code in the
+response body, not a different HTTP status.
+
+**Pagination: `limit`/`offset` with a `has_more` flag, not a total count.** `GET /api/sessions`
+fetches `limit + 1` rows to know whether there's a next page, rather than running a separate
+`COUNT(*)` query. **Why:** a session list is browsed, not jumped-to-page-N - "is there more" is all
+"Load more" needs, and a second count query would double the DB round trips for a number the UI
+never displays. `limit` is clamped server-side to 100 regardless of what's requested, so a client
+bug (or a tampered request) can't force an unbounded fetch. **Revisit if:** the UI ever wants a
+numbered pager or a "showing X of Y" count - that needs the real total, which is the point where
+the extra `COUNT(*)` query becomes worth its cost.
+
+**Pause vs. "End session."** The live view's mic button is Start → Pause → Resume (never Stop); a
+separate "End session" button explicitly leaves the live view and navigates home. **Why a separate
+action, not overloading Pause:** per "one session, many record cycles" above, pausing must not end
+the DB session - but the user still needs a clear, deliberate way to say "I'm done with this
+meeting" and leave, distinct from "I'm just pausing to let someone else talk." One button for both
+would mean either pausing accidentally ends the session, or leaving the page requires knowing to
+pause first. **Revisit if:** user testing shows the two actions get confused for each other - a
+single button with a confirm step is the likely fix, not re-merging the two actions.
+
+**`ended_at` now means "last time a live view left this session," not "recording finished."** It's
+written exactly once per visit, in `_cleanup` on disconnect - never in `_pause_transcription`,
+never on every stop (KAN-36). **Why:** the earlier meaning ("this session is over") stopped being
+true the moment resume became possible - a session can be revisited (a fresh WS connection,
+a fresh `join_session`) after `ended_at` was already set, and that reconnect correctly overwrites
+it again on the next disconnect. **Revisit if:** a genuine "this session is permanently closed"
+state is ever needed (e.g. to block further recording into an old session) - that's a different
+column (an explicit `closed` flag), not a repurposing of `ended_at` again.
+
+**The "unfinished" badge was dropped, not built.** An earlier reading of the spec assumed the home
+list would flag a session with `ended_at IS NULL` as "unfinished," implying it stopped
+mid-recording (e.g. a crash). **Why dropped:** now that pausing deliberately leaves `ended_at` null
+until the *next* disconnect (see above), a null `ended_at` no longer distinguishes "abandoned
+mid-recording" from "perfectly normal, currently paused, might be resumed any time" - the signal
+the badge was meant to carry doesn't exist under the new semantics. **Revisit if:** a real "was
+this actually abandoned" signal is wanted - that needs its own explicit state, not an inference
+from `ended_at`.
+
+## Phase 4: re-translating a past session's history is on-demand, not persisted
+
+**Context:** KAN-10's history view lets a user open a past session and view it translated into a
+language other than the one it was originally recorded with. `messages.translated_text`/
+`target_language` already hold the live-session translation from when it was recorded.
+
+**Chosen:** `POST /api/sessions/{id}/translate` calls DeepL fresh every time the view is opened in a
+new language and returns the result without writing anything back - the original
+`messages.translated_text`/`target_language` stay exactly as recorded. **Why:** persisting every
+language a session has ever been viewed in would need a join table (`message_id`, `language`,
+`translated_text`) for a feature that's read far more rarely than it would be written, and it
+would let stored translations silently go stale if DeepL's model changes. On-demand keeps the
+schema as-is and the history view always reflects DeepL's current output.
+
+**Cost:** viewing a session's history in a language it hasn't been viewed in before spends DeepL
+characters again, every time - on the free tier's monthly quota, repeatedly opening old sessions in
+several languages adds up. Not a problem yet at single-user local-only scale; worth revisiting
+(e.g. a short-lived cache) if this ever runs with real usage volume.
+
+**Batching:** `deepl.translate_many()` sends up to 50 texts as repeated `text` fields in one DeepL
+request rather than one request per message - a session with dozens of messages would otherwise be
+dozens of sequential round trips just to open the page. Chunks beyond 50 (DeepL's per-request limit
+is unconfirmed from this sandboxed environment, same restriction noted above for Catalan) go in
+further requests; a failed chunk maps to `null` for each of its messages rather than failing the
+whole view; a still-untranslated `original_text` is a legitimate result, not a bug to hide.
+
 ## Persistence: Supabase over local SQLite
 
 **Chosen:** Supabase (hosted PostgreSQL)
@@ -199,6 +338,35 @@ more than one real user.
 **Alternative:** Next.js
 
 **Why:** No need for SSR or routing in v1 — it's a single-page tool. Vite's dev server is faster. Less boilerplate. Next.js would be overkill here.
+
+## Future: persisting partial transcripts + manual edit (parked, Phase 6+)
+
+**Context:** Manel's idea, while verifying Phase 4 by hand: if you pause right as you're mid-sentence,
+the in-flight `partial_transcript` is lost — only a `committed_transcript` (ElevenLabs' own "this
+segment is final" signal) ever reaches `_handle_committed_transcript` and gets saved. Proposal: save
+the partial too, marked as such, so an accidental pause doesn't lose it; a further idea in the same
+vein is letting a user manually edit or delete part of a message's original text later.
+
+**Why this is parked, not a quick add-on:**
+- Partials fire many times a second while speaking (each is ElevenLabs revising its own guess at the
+  current segment) - naively inserting a `messages` row per partial would flood the table. This needs
+  an upsert-the-latest-partial-into-one-row model, not the existing append-only insert path.
+- ElevenLabs already sends an `edited_transcript` event when it revises a previously-committed
+  segment - today `_relay_transcripts` only logs it (`elif event_type in ("session_started",
+  "warning", "edited_transcript"): logger.info(...)`). That event is the most likely mechanism for
+  "partial became final, replace its row" - worth investigating before designing a custom
+  reconciliation scheme, rather than assuming one is needed from scratch.
+- Needs a schema change (a `status`/`is_partial` column on `messages`, or a separate table) and a WS
+  contract change (a new message type, or a status field on the existing `transcript` message) -
+  exactly the two things `CLAUDE.md`'s "ask before" list flags, so this isn't a fix folded into
+  whatever ticket happens to touch `_handle_committed_transcript` next.
+- Manual edit/delete of `original_text` raises its own follow-on questions this hasn't been scoped
+  for yet: does editing a message re-trigger translation (spends DeepL quota) or just update the
+  displayed original, and does `sequence` stay stable under a delete (almost certainly yes, per the
+  reasoning `messages_session_sequence_unique` was added for - see KAN-22 above).
+
+**Revisit:** scope it as its own planned piece of work (`plan-task`) once there's appetite to build
+it - candidate for Phase 6 alongside the other parked items, not a Phase 4/5 blocker.
 
 ## Future: production deploy on AWS (not started, notes for later)
 

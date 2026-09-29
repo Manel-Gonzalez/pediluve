@@ -1,5 +1,6 @@
 import asyncio
 import time
+import uuid
 from contextlib import contextmanager
 
 import pytest
@@ -47,26 +48,61 @@ def authenticated_ws():
     return _authenticated_connection
 
 
-@pytest.fixture(autouse=True)
-def fake_supabase(monkeypatch):
-    state = {"sessions": {}, "messages": []}
-    counter = {"n": 0}
+class _FakeSupabase:
+    # A fake covering only the session/message operations ws.py still calls
+    # directly (create_session is no longer one of them - sessions are
+    # created via the REST API, see KAN-36). seed_session lets a test set up
+    # a session as if it already existed before this connection joined it.
+    def __init__(self):
+        self.sessions: dict[str, dict] = {}
+        self.messages: list[dict] = []
 
-    async def fake_create_session(user, source_language=None, target_language="en"):
-        counter["n"] += 1
-        session_id = f"session-{counter['n']}"
-        state["sessions"][session_id] = {
-            "user_id": user.id,
+    def seed_session(
+        self,
+        *,
+        user_id: str = DEFAULT_USER.id,
+        title: str | None = "Test session",
+        source_language: str | None = None,
+        target_language: str | None = None,
+        messages: list | None = None,
+    ) -> str:
+        session_id = str(uuid.uuid4())
+        self.sessions[session_id] = {
+            "id": session_id,
+            "user_id": user_id,
+            "title": title,
             "source_language": source_language,
             "target_language": target_language,
             "ended_at": None,
         }
+        for index, message in enumerate(messages or []):
+            if isinstance(message, str):
+                message = {"original_text": message}
+            self.messages.append(
+                {
+                    "session_id": session_id,
+                    "sequence": message.get("sequence", index),
+                    "original_text": message["original_text"],
+                    "translated_text": message.get("translated_text"),
+                    "target_language": message.get("target_language"),
+                }
+            )
         return session_id
 
-    async def fake_save_message(
-        user, session_id, sequence, original_text, translated_text=None, target_language=None
+    async def get_session_with_messages(self, user, session_id):
+        session = self.sessions.get(session_id)
+        if session is None or session["user_id"] != user.id:
+            return None
+        messages = sorted(
+            (m for m in self.messages if m["session_id"] == session_id),
+            key=lambda m: m["sequence"],
+        )
+        return {**session, "messages": messages}
+
+    async def save_message(
+        self, user, session_id, sequence, original_text, translated_text=None, target_language=None
     ):
-        state["messages"].append(
+        self.messages.append(
             {
                 "user_id": user.id,
                 "access_token": user.access_token,
@@ -78,19 +114,43 @@ def fake_supabase(monkeypatch):
             }
         )
 
-    async def fake_update_session_target_language(user, session_id, target_language):
-        state["sessions"][session_id]["target_language"] = target_language
+    async def update_session_target_language(self, user, session_id, target_language):
+        self.sessions[session_id]["target_language"] = target_language
 
-    async def fake_end_session(user, session_id):
-        state["sessions"][session_id]["ended_at"] = "now"
+    async def update_session_source_language(self, user, session_id, source_language):
+        self.sessions[session_id]["source_language"] = source_language
 
-    monkeypatch.setattr("routers.ws.supabase.create_session", fake_create_session)
-    monkeypatch.setattr("routers.ws.supabase.save_message", fake_save_message)
+    async def end_session(self, user, session_id):
+        self.sessions[session_id]["ended_at"] = "now"
+
+
+@pytest.fixture(autouse=True)
+def fake_supabase(monkeypatch):
+    fake = _FakeSupabase()
+    monkeypatch.setattr("routers.ws.supabase.get_session_with_messages", fake.get_session_with_messages)
+    monkeypatch.setattr("routers.ws.supabase.save_message", fake.save_message)
     monkeypatch.setattr(
-        "routers.ws.supabase.update_session_target_language", fake_update_session_target_language
+        "routers.ws.supabase.update_session_target_language", fake.update_session_target_language
     )
-    monkeypatch.setattr("routers.ws.supabase.end_session", fake_end_session)
-    return state
+    monkeypatch.setattr(
+        "routers.ws.supabase.update_session_source_language", fake.update_session_source_language
+    )
+    monkeypatch.setattr("routers.ws.supabase.end_session", fake.end_session)
+    return fake
+
+
+@pytest.fixture
+def joined_ws(fake_supabase):
+    @contextmanager
+    def _make(user: AuthenticatedUser = DEFAULT_USER, **session_kwargs):
+        session_id = fake_supabase.seed_session(user_id=user.id, **session_kwargs)
+        with _authenticated_connection(user) as ws:
+            ws.send_json({"type": "join_session", "session_id": session_id})
+            joined = ws.receive_json()
+            assert joined["type"] == "session_joined"
+            yield ws, session_id
+
+    return _make
 
 
 def make_fake_session_class(canned_events):
@@ -160,6 +220,16 @@ def test_start_transcription_before_authenticating_is_rejected_and_closed(monkey
     assert fake_cls.instances == []
 
 
+def test_join_session_before_authenticating_is_rejected_and_closed():
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "join_session", "session_id": str(uuid.uuid4())})
+        error = ws.receive_json()
+        assert error["type"] == "error"
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            ws.receive_json()
+        assert exc_info.value.code == ws_module.AUTH_REQUIRED_CLOSE_CODE
+
+
 def test_audio_bytes_before_authenticating_closes_the_connection():
     with client.websocket_connect("/ws") as ws:
         ws.send_bytes(b"\x00\x01")
@@ -194,16 +264,21 @@ def test_reauthenticating_as_the_same_user_replaces_the_token_used_for_later_sav
     fake_cls = make_fake_session_class(canned)
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
+    session_id = fake_supabase.seed_session()
+
     with _authenticated_connection() as ws:
         # Simulates a refreshed Supabase access token arriving mid-connection.
         ws.send_json({"type": "authenticate", "access_token": REFRESHED_USER.access_token})
         assert ws.receive_json() == {"type": "authenticated", "user_id": REFRESHED_USER.id}
 
+        ws.send_json({"type": "join_session", "session_id": session_id})
+        ws.receive_json()  # session_joined
+
         ws.send_json({"type": "start_transcription"})
         ws.receive_json()
         ws.send_json({"type": "stop_transcription"})
 
-    saved = fake_supabase["messages"][0]
+    saved = next(m for m in fake_supabase.messages if m["session_id"] == session_id)
     assert saved["access_token"] == REFRESHED_USER.access_token
 
 
@@ -257,14 +332,124 @@ def test_disconnecting_mid_session_still_persists_in_flight_committed_transcript
     fake_cls = make_fake_session_class(canned)
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
+    session_id = fake_supabase.seed_session(target_language="es")
+
     with authenticated_ws() as ws:
-        ws.send_json({"type": "set_target_language", "target_language": "es"})
+        ws.send_json({"type": "join_session", "session_id": session_id})
+        ws.receive_json()  # session_joined
         ws.send_json({"type": "start_transcription"})
         # Disconnect immediately - before either committed transcript has been
         # relayed or saved, both still in flight behind the slow translate.
 
-    assert len(fake_supabase["messages"]) == 2
-    assert [m["original_text"] for m in fake_supabase["messages"]] == ["hello", "world"]
+    saved = [m for m in fake_supabase.messages if m["session_id"] == session_id]
+    assert len(saved) == 2
+    assert [m["original_text"] for m in saved] == ["hello", "world"]
+
+
+# ── join_session ──────────────────────────────────────────────────────────
+
+
+def test_join_session_returns_stored_transcripts(fake_supabase, authenticated_ws):
+    session_id = fake_supabase.seed_session(
+        title="Standup",
+        source_language="en",
+        target_language="es",
+        messages=[
+            {"original_text": "hello", "translated_text": "hola", "target_language": "es"},
+            {"original_text": "world", "translated_text": "mundo", "target_language": "es"},
+        ],
+    )
+
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "join_session", "session_id": session_id})
+        assert ws.receive_json() == {
+            "type": "session_joined",
+            "session_id": session_id,
+            "title": "Standup",
+            "source_language": "en",
+            "target_language": "es",
+            "transcripts": [
+                {
+                    "type": "transcript",
+                    "original_text": "hello",
+                    "translated_text": "hola",
+                    "target_language": "es",
+                },
+                {
+                    "type": "transcript",
+                    "original_text": "world",
+                    "translated_text": "mundo",
+                    "target_language": "es",
+                },
+            ],
+        }
+
+
+def test_join_session_with_an_unknown_id_is_rejected_and_closed(authenticated_ws):
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "join_session", "session_id": str(uuid.uuid4())})
+        error = ws.receive_json()
+        assert error["type"] == "error"
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            ws.receive_json()
+        assert exc_info.value.code == ws_module.SESSION_NOT_FOUND_CLOSE_CODE
+
+
+def test_join_session_owned_by_another_user_is_rejected_and_closed(fake_supabase, authenticated_ws):
+    session_id = fake_supabase.seed_session(user_id=OTHER_USER.id)
+
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "join_session", "session_id": session_id})
+        error = ws.receive_json()
+        assert error["type"] == "error"
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            ws.receive_json()
+        assert exc_info.value.code == ws_module.SESSION_NOT_FOUND_CLOSE_CODE
+
+
+def test_join_session_with_a_non_uuid_id_is_rejected_and_closed(authenticated_ws):
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "join_session", "session_id": "not-a-uuid"})
+        error = ws.receive_json()
+        assert error["type"] == "error"
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            ws.receive_json()
+        assert exc_info.value.code == ws_module.SESSION_NOT_FOUND_CLOSE_CODE
+
+
+def test_joining_a_second_session_is_rejected_without_closing(joined_ws, fake_supabase):
+    with joined_ws() as (ws, _first_session_id):
+        second_session_id = fake_supabase.seed_session()
+        ws.send_json({"type": "join_session", "session_id": second_session_id})
+        error = ws.receive_json()
+        assert error["type"] == "error"
+
+        ws.send_json({"type": "message", "text": "still alive"})
+        assert ws.receive_json() == {"type": "echo", "text": "still alive"}
+
+
+def test_joining_a_session_with_stored_messages_continues_the_sequence(
+    monkeypatch, fake_supabase, authenticated_ws
+):
+    session_id = fake_supabase.seed_session(messages=["one", "two", "three"])
+
+    canned = [{"message_type": "committed_transcript", "text": "four"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "join_session", "session_id": session_id})
+        ws.receive_json()  # session_joined
+        ws.send_json({"type": "start_transcription"})
+        ws.receive_json()  # "four"
+        ws.send_json({"type": "stop_transcription"})
+
+    saved = next(
+        m
+        for m in fake_supabase.messages
+        if m["session_id"] == session_id and m["original_text"] == "four"
+    )
+    assert saved["sequence"] == 3
 
 
 # ── Everything below requires authentication first ──────────────────────
@@ -294,7 +479,32 @@ def test_unknown_message_type_returns_error(authenticated_ws):
         assert "not_a_real_type" in error["message"]
 
 
-def test_start_transcription_relays_partial_and_committed_events(monkeypatch, authenticated_ws):
+def test_start_transcription_before_joining_is_rejected_without_closing(monkeypatch, authenticated_ws):
+    fake_cls = make_fake_session_class([])
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "start_transcription"})
+        error = ws.receive_json()
+        assert error["type"] == "error"
+
+        ws.send_json({"type": "message", "text": "still alive"})
+        assert ws.receive_json() == {"type": "echo", "text": "still alive"}
+
+    assert fake_cls.instances == []
+
+
+def test_set_target_language_before_joining_is_rejected_without_closing(authenticated_ws):
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+        error = ws.receive_json()
+        assert error["type"] == "error"
+
+        ws.send_json({"type": "message", "text": "still alive"})
+        assert ws.receive_json() == {"type": "echo", "text": "still alive"}
+
+
+def test_start_transcription_relays_partial_and_committed_events(monkeypatch, joined_ws):
     canned = [
         {"message_type": "session_started", "session_id": "abc"},
         {"message_type": "partial_transcript", "text": "hel"},
@@ -303,7 +513,7 @@ def test_start_transcription_relays_partial_and_committed_events(monkeypatch, au
     fake_cls = make_fake_session_class(canned)
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, _session_id):
         ws.send_json({"type": "start_transcription", "audio_format": "pcm_16000"})
         assert ws.receive_json() == {"type": "partial_transcript", "text": "hel"}
         assert ws.receive_json() == {
@@ -316,11 +526,38 @@ def test_start_transcription_relays_partial_and_committed_events(monkeypatch, au
     assert fake_cls.instances[0].audio_format == "pcm_16000"
 
 
-def test_audio_chunks_are_forwarded_to_the_session(monkeypatch, authenticated_ws):
+def test_empty_committed_transcripts_are_not_processed(monkeypatch, joined_ws, fake_supabase):
+    # ElevenLabs' VAD occasionally commits a segment with no recognized
+    # speech (silence, noise) - an empty or whitespace-only text, not a
+    # missing one. These must never reach the client, DeepL, or Supabase.
+    canned = [
+        {"message_type": "committed_transcript", "text": ""},
+        {"message_type": "committed_transcript", "text": "   "},
+        {"message_type": "committed_transcript", "text": "hello"},
+    ]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with joined_ws() as (ws, session_id):
+        ws.send_json({"type": "start_transcription"})
+        assert ws.receive_json() == {
+            "type": "transcript",
+            "original_text": "hello",
+            "translated_text": None,
+            "target_language": None,
+        }
+        ws.send_json({"type": "stop_transcription"})
+
+    saved = [m for m in fake_supabase.messages if m["session_id"] == session_id]
+    assert len(saved) == 1
+    assert saved[0]["original_text"] == "hello"
+
+
+def test_audio_chunks_are_forwarded_to_the_session(monkeypatch, joined_ws):
     fake_cls = make_fake_session_class([])
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, _session_id):
         ws.send_json({"type": "start_transcription"})
         ws.send_bytes(b"\x00\x01" * 10)
         ws.send_json({"type": "stop_transcription"})
@@ -328,11 +565,11 @@ def test_audio_chunks_are_forwarded_to_the_session(monkeypatch, authenticated_ws
     assert fake_cls.instances[0].audio_chunks == [b"\x00\x01" * 10]
 
 
-def test_stop_transcription_closes_the_session(monkeypatch, authenticated_ws):
+def test_stop_transcription_closes_the_session(monkeypatch, joined_ws):
     fake_cls = make_fake_session_class([])
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, _session_id):
         ws.send_json({"type": "start_transcription"})
         ws.send_json({"type": "stop_transcription"})
         ws.send_json({"type": "message", "text": "still alive"})
@@ -341,11 +578,50 @@ def test_stop_transcription_closes_the_session(monkeypatch, authenticated_ws):
     assert fake_cls.instances[0].closed is True
 
 
-def test_duplicate_start_transcription_is_ignored(monkeypatch, authenticated_ws):
+def test_stop_transcription_does_not_end_the_session(monkeypatch, joined_ws, fake_supabase):
     fake_cls = make_fake_session_class([])
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, session_id):
+        ws.send_json({"type": "start_transcription"})
+        ws.send_json({"type": "stop_transcription"})
+        ws.send_json({"type": "message", "text": "still alive"})
+        assert ws.receive_json() == {"type": "echo", "text": "still alive"}
+        # Checked before the connection closes below - closing it ends the
+        # session (see test_disconnecting_ends_the_session_exactly_once).
+        assert fake_supabase.sessions[session_id]["ended_at"] is None
+
+
+def test_disconnecting_ends_the_session_exactly_once(monkeypatch, joined_ws, fake_supabase):
+    end_calls: list[str] = []
+    real_end_session = fake_supabase.end_session
+
+    async def counting_end_session(user, session_id):
+        end_calls.append(session_id)
+        await real_end_session(user, session_id)
+
+    monkeypatch.setattr("routers.ws.supabase.end_session", counting_end_session)
+
+    fake_cls = make_fake_session_class([])
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with joined_ws() as (ws, session_id):
+        # Two pause/resume cycles before disconnecting - neither stop should
+        # end the session.
+        ws.send_json({"type": "start_transcription"})
+        ws.send_json({"type": "stop_transcription"})
+        ws.send_json({"type": "start_transcription"})
+        ws.send_json({"type": "stop_transcription"})
+
+    assert end_calls == [session_id]
+    assert fake_supabase.sessions[session_id]["ended_at"] is not None
+
+
+def test_duplicate_start_transcription_is_ignored(monkeypatch, joined_ws):
+    fake_cls = make_fake_session_class([])
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with joined_ws() as (ws, _session_id):
         ws.send_json({"type": "start_transcription"})
         ws.send_json({"type": "start_transcription"})
         ws.send_json({"type": "stop_transcription"})
@@ -355,20 +631,22 @@ def test_duplicate_start_transcription_is_ignored(monkeypatch, authenticated_ws)
     assert len(fake_cls.instances) == 1
 
 
-def test_start_transcription_creates_a_supabase_session(monkeypatch, authenticated_ws, fake_supabase):
+def test_start_transcription_never_calls_create_session(monkeypatch, joined_ws):
+    async def unexpected_create_session(*args, **kwargs):
+        raise AssertionError("create_session should never be called - sessions come from the REST API")
+
+    monkeypatch.setattr("routers.ws.supabase.create_session", unexpected_create_session)
+
     fake_cls = make_fake_session_class([])
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, _session_id):
         ws.send_json({"type": "start_transcription"})
         ws.send_json({"type": "stop_transcription"})
 
-    assert len(fake_supabase["sessions"]) == 1
-    assert next(iter(fake_supabase["sessions"].values()))["user_id"] == DEFAULT_USER.id
-
 
 def test_committed_transcripts_are_saved_with_incrementing_sequence(
-    monkeypatch, authenticated_ws, fake_supabase
+    monkeypatch, joined_ws, fake_supabase
 ):
     canned = [
         {"message_type": "committed_transcript", "text": "hello"},
@@ -377,54 +655,71 @@ def test_committed_transcripts_are_saved_with_incrementing_sequence(
     fake_cls = make_fake_session_class(canned)
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, session_id):
         ws.send_json({"type": "start_transcription"})
         ws.receive_json()
         ws.receive_json()
         ws.send_json({"type": "stop_transcription"})
 
-    assert [m["sequence"] for m in fake_supabase["messages"]] == [0, 1]
-    assert [m["original_text"] for m in fake_supabase["messages"]] == ["hello", "world"]
-    session_id = next(iter(fake_supabase["sessions"]))
-    assert all(m["session_id"] == session_id for m in fake_supabase["messages"])
+    saved = [m for m in fake_supabase.messages if m["session_id"] == session_id]
+    assert [m["sequence"] for m in saved] == [0, 1]
+    assert [m["original_text"] for m in saved] == ["hello", "world"]
 
 
-def test_partial_transcripts_are_not_persisted(monkeypatch, authenticated_ws, fake_supabase):
+def test_pausing_and_resuming_saves_messages_to_the_same_session_with_incrementing_sequence(
+    monkeypatch, joined_ws, fake_supabase
+):
+    canned = [{"message_type": "committed_transcript", "text": "hello"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with joined_ws() as (ws, session_id):
+        ws.send_json({"type": "start_transcription"})
+        ws.receive_json()  # "hello"
+        ws.send_json({"type": "stop_transcription"})
+
+        # A second recording (pause/resume, not a new join) in the same
+        # connection commits "world" - the fake session class's events()
+        # reads canned live, so mutating it in place feeds the resumed
+        # recording a different transcript.
+        canned.clear()
+        canned.append({"message_type": "committed_transcript", "text": "world"})
+
+        ws.send_json({"type": "start_transcription"})
+        ws.receive_json()  # "world"
+        ws.send_json({"type": "stop_transcription"})
+
+    saved = [m for m in fake_supabase.messages if m["session_id"] == session_id]
+    assert [m["sequence"] for m in saved] == [0, 1]
+    assert [m["original_text"] for m in saved] == ["hello", "world"]
+
+
+def test_partial_transcripts_are_not_persisted(monkeypatch, joined_ws, fake_supabase):
     canned = [{"message_type": "partial_transcript", "text": "hel"}]
     fake_cls = make_fake_session_class(canned)
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, session_id):
         ws.send_json({"type": "start_transcription"})
         ws.receive_json()
         ws.send_json({"type": "stop_transcription"})
 
-    assert fake_supabase["messages"] == []
+    assert [m for m in fake_supabase.messages if m["session_id"] == session_id] == []
 
 
-def test_stop_transcription_marks_the_session_ended(monkeypatch, authenticated_ws, fake_supabase):
-    fake_cls = make_fake_session_class([])
-    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
-
-    with authenticated_ws() as ws:
-        ws.send_json({"type": "start_transcription"})
-        ws.send_json({"type": "stop_transcription"})
-
-    session_id = next(iter(fake_supabase["sessions"]))
-    assert fake_supabase["sessions"][session_id]["ended_at"] is not None
-
-
-def test_supabase_failure_does_not_break_transcription(monkeypatch, authenticated_ws):
-    async def failing_create_session(user, source_language=None, target_language="en"):
+def test_save_message_failure_does_not_break_transcription(monkeypatch, joined_ws):
+    async def failing_save_message(
+        user, session_id, sequence, original_text, translated_text=None, target_language=None
+    ):
         raise RuntimeError("supabase is down")
 
-    monkeypatch.setattr("routers.ws.supabase.create_session", failing_create_session)
+    monkeypatch.setattr("routers.ws.supabase.save_message", failing_save_message)
 
     canned = [{"message_type": "committed_transcript", "text": "still works"}]
     fake_cls = make_fake_session_class(canned)
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, _session_id):
         ws.send_json({"type": "start_transcription"})
         assert ws.receive_json() == {
             "type": "transcript",
@@ -437,7 +732,7 @@ def test_supabase_failure_does_not_break_transcription(monkeypatch, authenticate
         assert ws.receive_json() == {"type": "echo", "text": "ok"}
 
 
-def test_without_a_target_language_deepl_is_not_called(monkeypatch, authenticated_ws):
+def test_without_a_target_language_deepl_is_not_called(monkeypatch, joined_ws):
     async def unexpected_translate(text, target_language):
         raise AssertionError("deepl.translate should not be called with no target language set")
 
@@ -447,7 +742,7 @@ def test_without_a_target_language_deepl_is_not_called(monkeypatch, authenticate
     fake_cls = make_fake_session_class(canned)
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, _session_id):
         ws.send_json({"type": "start_transcription"})
         assert ws.receive_json() == {
             "type": "transcript",
@@ -459,7 +754,7 @@ def test_without_a_target_language_deepl_is_not_called(monkeypatch, authenticate
 
 
 def test_set_target_language_triggers_translation_on_the_next_committed_transcript(
-    monkeypatch, authenticated_ws
+    monkeypatch, joined_ws
 ):
     async def fake_translate(text, target_language):
         return f"[{target_language}] {text}"
@@ -470,7 +765,7 @@ def test_set_target_language_triggers_translation_on_the_next_committed_transcri
     fake_cls = make_fake_session_class(canned)
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, _session_id):
         ws.send_json({"type": "set_target_language", "target_language": "es"})
         ws.send_json({"type": "start_transcription"})
         assert ws.receive_json() == {
@@ -482,16 +777,290 @@ def test_set_target_language_triggers_translation_on_the_next_committed_transcri
         ws.send_json({"type": "stop_transcription"})
 
 
-def test_set_target_language_is_invalid_without_a_target_language(authenticated_ws):
+def test_set_target_language_change_retranslates_already_committed_transcripts(monkeypatch, joined_ws):
+    async def fake_translate(text, target_language):
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", fake_translate)
+
+    canned = [{"message_type": "committed_transcript", "text": "hello"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with joined_ws() as (ws, _session_id):
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+        ws.send_json({"type": "start_transcription"})
+        assert ws.receive_json() == {
+            "type": "transcript",
+            "original_text": "hello",
+            "translated_text": "[es] hello",
+            "target_language": "es",
+        }
+
+        ws.send_json({"type": "set_target_language", "target_language": "fr"})
+        assert ws.receive_json() == {
+            "type": "retranslated_transcripts",
+            "target_language": "fr",
+            "transcripts": [
+                {
+                    "type": "transcript",
+                    "original_text": "hello",
+                    "translated_text": "[fr] hello",
+                    "target_language": "fr",
+                }
+            ],
+        }
+        ws.send_json({"type": "stop_transcription"})
+
+
+def test_set_target_language_to_the_same_value_does_not_retranslate(monkeypatch, joined_ws):
+    async def fake_translate(text, target_language):
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", fake_translate)
+
+    canned = [{"message_type": "committed_transcript", "text": "hello"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with joined_ws() as (ws, _session_id):
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+        ws.send_json({"type": "start_transcription"})
+        ws.receive_json()  # the original transcript
+
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+        ws.send_json({"type": "message", "text": "still alive"})
+        assert ws.receive_json() == {"type": "echo", "text": "still alive"}
+        ws.send_json({"type": "stop_transcription"})
+
+
+def test_set_target_language_equal_to_the_seeded_language_does_not_retranslate(
+    fake_supabase, authenticated_ws
+):
+    session_id = fake_supabase.seed_session(target_language="es", messages=["hello"])
+
     with authenticated_ws() as ws:
+        ws.send_json({"type": "join_session", "session_id": session_id})
+        ws.receive_json()  # session_joined
+
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+        ws.send_json({"type": "message", "text": "still alive"})
+        assert ws.receive_json() == {"type": "echo", "text": "still alive"}
+
+
+def test_set_target_language_with_no_committed_transcripts_yet_does_not_retranslate(joined_ws):
+    with joined_ws() as (ws, _session_id):
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+        ws.send_json({"type": "set_target_language", "target_language": "fr"})
+        ws.send_json({"type": "message", "text": "still alive"})
+        assert ws.receive_json() == {"type": "echo", "text": "still alive"}
+
+
+def test_retranslation_does_not_block_the_receive_loop(monkeypatch, joined_ws):
+    async def slow_translate(text, target_language):
+        await asyncio.sleep(0.3)
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", slow_translate)
+
+    canned = [{"message_type": "committed_transcript", "text": "hello"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with joined_ws() as (ws, _session_id):
+        ws.send_json({"type": "start_transcription"})
+        ws.receive_json()  # original transcript, untranslated (no target language set yet)
+
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+        started = time.monotonic()
+        ws.send_json({"type": "message", "text": "still alive"})
+        assert ws.receive_json() == {"type": "echo", "text": "still alive"}
+        # The echo must not wait behind the slow retranslation - it should come
+        # back almost immediately, well under the translate call's 0.3s delay.
+        assert time.monotonic() - started < 0.15
+        ws.send_json({"type": "stop_transcription"})
+
+
+def test_a_later_target_language_change_supersedes_an_in_flight_retranslation(monkeypatch, joined_ws):
+    async def slow_translate(text, target_language):
+        delay = {"de": 0.15, "es": 0.02}[target_language]
+        await asyncio.sleep(delay)
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", slow_translate)
+
+    canned = [{"message_type": "committed_transcript", "text": "hello"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with joined_ws() as (ws, _session_id):
+        ws.send_json({"type": "start_transcription"})
+        ws.receive_json()  # original transcript, untranslated
+
+        ws.send_json({"type": "set_target_language", "target_language": "de"})
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+
+        # Only the latest ("es") retranslation should ever be sent - the
+        # slower, now-superseded "de" one must be dropped, not just delayed.
+        assert ws.receive_json() == {
+            "type": "retranslated_transcripts",
+            "target_language": "es",
+            "transcripts": [
+                {
+                    "type": "transcript",
+                    "original_text": "hello",
+                    "translated_text": "[es] hello",
+                    "target_language": "es",
+                }
+            ],
+        }
+
+        # Wait past "de"'s slower delay to prove its stale result never
+        # arrives afterward either.
+        time.sleep(0.2)
+        ws.send_json({"type": "message", "text": "still alive"})
+        assert ws.receive_json() == {"type": "echo", "text": "still alive"}
+        ws.send_json({"type": "stop_transcription"})
+
+
+def test_set_target_language_after_join_retranslates_stored_and_new_lines_together(
+    monkeypatch, fake_supabase, authenticated_ws
+):
+    async def fake_translate(text, target_language):
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", fake_translate)
+
+    session_id = fake_supabase.seed_session(messages=["hello"])
+    canned = [{"message_type": "committed_transcript", "text": "world"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "join_session", "session_id": session_id})
+        ws.receive_json()  # session_joined
+
+        ws.send_json({"type": "start_transcription"})
+        ws.receive_json()  # "world", untranslated (no target language yet)
+
+        ws.send_json({"type": "set_target_language", "target_language": "es"})
+        assert ws.receive_json() == {
+            "type": "retranslated_transcripts",
+            "target_language": "es",
+            "transcripts": [
+                {
+                    "type": "transcript",
+                    "original_text": "hello",
+                    "translated_text": "[es] hello",
+                    "target_language": "es",
+                },
+                {
+                    "type": "transcript",
+                    "original_text": "world",
+                    "translated_text": "[es] world",
+                    "target_language": "es",
+                },
+            ],
+        }
+        ws.send_json({"type": "stop_transcription"})
+
+
+async def test_a_transcript_committed_during_retranslation_is_included_in_the_result(monkeypatch):
+    from routers.ws import ConnectionHandler
+
+    sent: list[dict] = []
+
+    class FakeWebSocket:
+        async def send_json(self, payload):
+            sent.append(payload)
+
+    handler = ConnectionHandler(FakeWebSocket())
+    handler.committed_texts = ["hello"]
+    handler.target_language = "es"
+
+    async def slow_translate(text, target_language):
+        if text == "hello":
+            # Simulate a normal committed transcript arriving on the main
+            # receive loop while this retranslation of "hello" is in flight.
+            await handler._handle_committed_transcript("world")
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", slow_translate)
+
+    await handler._retranslate_committed_texts("es", handler._retranslation_generation)
+
+    # "world" was already sent once via the normal path...
+    assert sent[0] == {
+        "type": "transcript",
+        "original_text": "world",
+        "translated_text": "[es] world",
+        "target_language": "es",
+    }
+    # ...and the wholesale-replacing retranslated_transcripts result must
+    # still include it - dropping it here would erase it from the screen
+    # even though it was just correctly delivered.
+    assert sent[1] == {
+        "type": "retranslated_transcripts",
+        "target_language": "es",
+        "transcripts": [
+            {
+                "type": "transcript",
+                "original_text": "hello",
+                "translated_text": "[es] hello",
+                "target_language": "es",
+            },
+            {
+                "type": "transcript",
+                "original_text": "world",
+                "translated_text": "[es] world",
+                "target_language": "es",
+            },
+        ],
+    }
+
+
+async def test_a_superseded_retranslation_stops_calling_deepl_early(monkeypatch):
+    from routers.ws import ConnectionHandler
+
+    sent: list[dict] = []
+
+    class FakeWebSocket:
+        async def send_json(self, payload):
+            sent.append(payload)
+
+    handler = ConnectionHandler(FakeWebSocket())
+    handler.committed_texts = ["one", "two", "three"]
+    handler.target_language = "es"
+    handler._retranslation_generation = 1
+
+    translated: list[str] = []
+
+    async def translate_and_supersede(text, target_language):
+        translated.append(text)
+        if text == "one":
+            # Simulate a further language change landing while this
+            # translation is still in flight.
+            handler._retranslation_generation = 2
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", translate_and_supersede)
+
+    await handler._retranslate_committed_texts("es", 1)
+
+    # "two" and "three" must never reach DeepL once superseded, and no
+    # (now-stale) result should be sent either.
+    assert translated == ["one"]
+    assert sent == []
+
+
+def test_set_target_language_is_invalid_without_a_target_language(joined_ws):
+    with joined_ws() as (ws, _session_id):
         ws.send_json({"type": "set_target_language"})
         error = ws.receive_json()
         assert error["type"] == "error"
 
 
-def test_deepl_failure_does_not_crash_the_socket_and_translated_text_stays_null(
-    monkeypatch, authenticated_ws
-):
+def test_deepl_failure_does_not_crash_the_socket_and_translated_text_stays_null(monkeypatch, joined_ws):
     async def failing_translate(text, target_language):
         raise RuntimeError("deepl is down")
 
@@ -501,7 +1070,7 @@ def test_deepl_failure_does_not_crash_the_socket_and_translated_text_stays_null(
     fake_cls = make_fake_session_class(canned)
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, _session_id):
         ws.send_json({"type": "set_target_language", "target_language": "es"})
         ws.send_json({"type": "start_transcription"})
         assert ws.receive_json() == {
@@ -542,9 +1111,7 @@ async def test_committed_transcript_uses_the_target_language_captured_at_dispatc
     assert handler.target_language == "fr"
 
 
-async def test_committed_transcript_is_saved_even_if_sending_it_to_the_client_fails(
-    fake_supabase,
-):
+async def test_committed_transcript_is_saved_even_if_sending_it_to_the_client_fails(fake_supabase):
     from routers.ws import ConnectionHandler
 
     class DisconnectingWebSocket:
@@ -559,11 +1126,11 @@ async def test_committed_transcript_is_saved_even_if_sending_it_to_the_client_fa
 
     await handler._handle_committed_transcript("hello")
 
-    assert len(fake_supabase["messages"]) == 1
-    assert fake_supabase["messages"][0]["original_text"] == "hello"
+    assert len(fake_supabase.messages) == 1
+    assert fake_supabase.messages[0]["original_text"] == "hello"
 
 
-def test_translation_does_not_block_relaying_further_events(monkeypatch, authenticated_ws):
+def test_translation_does_not_block_relaying_further_events(monkeypatch, joined_ws):
     async def slow_translate(text, target_language):
         await asyncio.sleep(0.2)
         return f"[{target_language}] {text}"
@@ -577,7 +1144,7 @@ def test_translation_does_not_block_relaying_further_events(monkeypatch, authent
     fake_cls = make_fake_session_class(canned)
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, _session_id):
         ws.send_json({"type": "set_target_language", "target_language": "es"})
         ws.send_json({"type": "start_transcription"})
         # Queued right after the slow committed_transcript - must not wait for
@@ -593,12 +1160,12 @@ def test_translation_does_not_block_relaying_further_events(monkeypatch, authent
 
 
 def test_start_transcription_with_an_invalid_payload_returns_error_and_does_not_start(
-    monkeypatch, authenticated_ws
+    monkeypatch, joined_ws
 ):
     fake_cls = make_fake_session_class([])
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, _session_id):
         ws.send_json({"type": "start_transcription", "source_language": {"bad": "shape"}})
         error = ws.receive_json()
         assert error["type"] == "error"
@@ -609,7 +1176,7 @@ def test_start_transcription_with_an_invalid_payload_returns_error_and_does_not_
     assert fake_cls.instances == []
 
 
-def test_set_target_language_rejects_an_unsupported_code(monkeypatch, authenticated_ws):
+def test_set_target_language_rejects_an_unsupported_code(monkeypatch, joined_ws):
     async def unexpected_translate(text, target_language):
         raise AssertionError("should not translate with a rejected target language")
 
@@ -618,7 +1185,7 @@ def test_set_target_language_rejects_an_unsupported_code(monkeypatch, authentica
     fake_cls = make_fake_session_class(canned)
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, _session_id):
         ws.send_json({"type": "set_target_language", "target_language": "xx"})
         error = ws.receive_json()
         assert error["type"] == "error"
@@ -633,67 +1200,47 @@ def test_set_target_language_rejects_an_unsupported_code(monkeypatch, authentica
         ws.send_json({"type": "stop_transcription"})
 
 
-def test_start_transcription_persists_the_source_language(monkeypatch, authenticated_ws, fake_supabase):
+def test_start_transcription_persists_the_source_language(monkeypatch, joined_ws, fake_supabase):
     fake_cls = make_fake_session_class([])
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, session_id):
         ws.send_json({"type": "start_transcription", "source_language": "es"})
         ws.send_json({"type": "stop_transcription"})
 
-    session_id = next(iter(fake_supabase["sessions"]))
-    assert fake_supabase["sessions"][session_id]["source_language"] == "es"
+    assert fake_supabase.sessions[session_id]["source_language"] == "es"
 
 
-def test_start_transcription_with_no_source_language_persists_none(
-    monkeypatch, authenticated_ws, fake_supabase
+def test_start_transcription_with_no_source_language_leaves_it_unset(
+    monkeypatch, joined_ws, fake_supabase
 ):
     fake_cls = make_fake_session_class([])
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, session_id):
         ws.send_json({"type": "start_transcription"})
         ws.send_json({"type": "stop_transcription"})
 
-    session_id = next(iter(fake_supabase["sessions"]))
-    assert fake_supabase["sessions"][session_id]["source_language"] is None
-
-
-def test_start_transcription_persists_a_target_language_set_before_recording_started(
-    monkeypatch, authenticated_ws, fake_supabase
-):
-    fake_cls = make_fake_session_class([])
-    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
-
-    with authenticated_ws() as ws:
-        ws.send_json({"type": "set_target_language", "target_language": "fr"})
-        ws.send_json({"type": "start_transcription"})
-        ws.send_json({"type": "stop_transcription"})
-
-    session_id = next(iter(fake_supabase["sessions"]))
-    assert fake_supabase["sessions"][session_id]["target_language"] == "fr"
+    assert fake_supabase.sessions[session_id]["source_language"] is None
 
 
 def test_set_target_language_updates_the_persisted_session_mid_recording(
-    monkeypatch, authenticated_ws, fake_supabase
+    monkeypatch, joined_ws, fake_supabase
 ):
     fake_cls = make_fake_session_class([])
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, session_id):
         ws.send_json({"type": "start_transcription"})
-        session_id = next(iter(fake_supabase["sessions"]))
-        assert fake_supabase["sessions"][session_id]["target_language"] == "en"
+        assert fake_supabase.sessions[session_id]["target_language"] is None
 
         ws.send_json({"type": "set_target_language", "target_language": "de"})
         ws.send_json({"type": "stop_transcription"})
 
-    assert fake_supabase["sessions"][session_id]["target_language"] == "de"
+    assert fake_supabase.sessions[session_id]["target_language"] == "de"
 
 
-def test_set_target_language_persistence_does_not_block_the_receive_loop(
-    monkeypatch, authenticated_ws, fake_supabase
-):
+def test_set_target_language_persistence_does_not_block_the_receive_loop(monkeypatch, joined_ws):
     async def slow_update(user, session_id, target_language):
         await asyncio.sleep(0.3)
 
@@ -702,7 +1249,7 @@ def test_set_target_language_persistence_does_not_block_the_receive_loop(
     fake_cls = make_fake_session_class([])
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, _session_id):
         ws.send_json({"type": "start_transcription"})
         ws.send_json({"type": "set_target_language", "target_language": "es"})
         started = time.monotonic()
@@ -714,9 +1261,7 @@ def test_set_target_language_persistence_does_not_block_the_receive_loop(
         ws.send_json({"type": "stop_transcription"})
 
 
-def test_set_target_language_persistence_failure_does_not_crash_the_socket(
-    monkeypatch, authenticated_ws, fake_supabase
-):
+def test_set_target_language_persistence_failure_does_not_crash_the_socket(monkeypatch, joined_ws):
     async def failing_update(user, session_id, target_language):
         raise RuntimeError("supabase is down")
 
@@ -725,7 +1270,7 @@ def test_set_target_language_persistence_failure_does_not_crash_the_socket(
     fake_cls = make_fake_session_class([])
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, _session_id):
         ws.send_json({"type": "start_transcription"})
         ws.send_json({"type": "set_target_language", "target_language": "de"})
         ws.send_json({"type": "message", "text": "still alive"})
@@ -734,7 +1279,7 @@ def test_set_target_language_persistence_failure_does_not_crash_the_socket(
 
 
 def test_committed_transcript_persists_translated_text_and_target_language(
-    monkeypatch, authenticated_ws, fake_supabase
+    monkeypatch, joined_ws, fake_supabase
 ):
     async def fake_translate(text, target_language):
         return f"[{target_language}] {text}"
@@ -745,29 +1290,29 @@ def test_committed_transcript_persists_translated_text_and_target_language(
     fake_cls = make_fake_session_class(canned)
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, session_id):
         ws.send_json({"type": "set_target_language", "target_language": "es"})
         ws.send_json({"type": "start_transcription"})
         ws.receive_json()
         ws.send_json({"type": "stop_transcription"})
 
-    saved = fake_supabase["messages"][0]
+    saved = next(m for m in fake_supabase.messages if m["session_id"] == session_id)
     assert saved["translated_text"] == "[es] hello"
     assert saved["target_language"] == "es"
 
 
 def test_committed_transcript_with_no_target_language_persists_null_translation(
-    monkeypatch, authenticated_ws, fake_supabase
+    monkeypatch, joined_ws, fake_supabase
 ):
     canned = [{"message_type": "committed_transcript", "text": "hello"}]
     fake_cls = make_fake_session_class(canned)
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
 
-    with authenticated_ws() as ws:
+    with joined_ws() as (ws, session_id):
         ws.send_json({"type": "start_transcription"})
         ws.receive_json()
         ws.send_json({"type": "stop_transcription"})
 
-    saved = fake_supabase["messages"][0]
+    saved = next(m for m in fake_supabase.messages if m["session_id"] == session_id)
     assert saved["translated_text"] is None
     assert saved["target_language"] is None

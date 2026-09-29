@@ -46,6 +46,85 @@ export type AuthenticatedMessage = {
   user_id: string
 }
 
+// Attaches this WS connection to an already-created session (created via the
+// REST API's POST /api/sessions, KAN-24) instead of the connection implicitly
+// creating one.
+export type JoinSessionMessage = {
+  type: 'join_session'
+  session_id: string
+}
+
+// Reply to a successful join_session: the session's current metadata plus
+// every transcript already stored, so the live view can render history
+// before anything new is said.
+export type SessionJoinedMessage = {
+  type: 'session_joined'
+  session_id: string
+  title: string | null
+  source_language: string | null
+  target_language: string | null
+  transcripts: TranscriptMessage[]
+}
+
+// Sent when the target language changes mid-session and there's already
+// committed transcript to retranslate - replaces the whole transcript list
+// rather than patching individual rows (no per-message id goes over the
+// wire for that).
+export type RetranslatedTranscriptsMessage = {
+  type: 'retranslated_transcripts'
+  target_language: string
+  transcripts: TranscriptMessage[]
+}
+
 export type LogMessage = EchoMessage | ErrorMessage
 
-export type ServerMessage = LogMessage | PartialTranscriptMessage | TranscriptMessage | AuthenticatedMessage
+export type ServerMessage =
+  | LogMessage
+  | PartialTranscriptMessage
+  | TranscriptMessage
+  | AuthenticatedMessage
+  | SessionJoinedMessage
+  | RetranslatedTranscriptsMessage
+
+// ── REST session models (KAN-23), matching backend/models/sessions.py ─────
+// Note: unrelated to @supabase/supabase-js's Session (the auth session) used
+// throughout useAuth/useWebSocket - this "session" is a recording/transcript
+// session, the thing the home page lists.
+
+export type SessionSummary = {
+  id: string
+  created_at: string
+  ended_at: string | null
+  source_language: string | null
+  target_language: string | null
+  title: string | null
+  message_count: number
+}
+
+export type SessionListResponse = {
+  items: SessionSummary[]
+  has_more: boolean
+}
+
+export type MessageRecord = {
+  id: string
+  sequence: number
+  created_at: string
+  original_text: string
+  translated_text: string | null
+  target_language: string | null
+}
+
+export type SessionDetail = SessionSummary & {
+  messages: MessageRecord[]
+}
+
+export type MessageTranslation = {
+  message_id: string
+  translated_text: string | null
+}
+
+export type TranslateResponse = {
+  target_language: string
+  translations: MessageTranslation[]
+}

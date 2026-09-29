@@ -1,0 +1,66 @@
+.session-detail-page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+  font-family: system-ui, sans-serif;
+}
+
+.session-detail-date {
+  color: #888;
+  font-size: 0.9rem;
+}
+
+.session-detail-error {
+  color: #c00;
+}
+
+.session-detail-language {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.session-detail-language label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.session-detail-translating {
+  font-size: 0.85rem;
+  color: #888;
+  font-style: italic;
+}
+
+.session-detail-page .transcript {
+  margin: 1rem 0;
+}
+
+.session-detail-page .transcript-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  font-size: 0.8rem;
+  color: #888;
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 0.25rem;
+}
+
+.session-detail-page .transcript-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.session-detail-page .transcript-row p {
+  margin: 0;
+}
+
+.session-detail-page .transcript-row .translated.pending {
+  color: #888;
+  font-style: italic;
+}

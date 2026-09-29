@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { getWebSocketUrl } from '../lib/api'
-import { buildAuthenticateMessage, type ConnectionStatus } from '../lib/auth'
-import { buildSetTargetLanguageMessage, buildStartTranscriptionMessage } from '../lib/languageControls'
+import { buildAuthenticateMessage, buildJoinSessionMessage, type ConnectionStatus } from '../lib/auth'
+import {
+  buildSetTargetLanguageMessage,
+  buildStartTranscriptionMessage,
+  DEFAULT_TARGET_LANGUAGE,
+} from '../lib/languageControls'
 import type { LogMessage, ServerMessage, TranscriptMessage } from '../lib/types'
 
+export type JoinStatus = 'joining' | 'joined' | 'not_found'
+
+// Matches backend/routers/ws.py's SESSION_NOT_FOUND_CLOSE_CODE.
+const SESSION_NOT_FOUND_CLOSE_CODE = 4404
+
 // Requires a real session (not Session | null): RequireAuth guarantees one
-// before this hook is ever called (see pages/RecordPage.tsx).
-export function useWebSocket(session: Session) {
+// before this hook is ever called (see pages/LiveSessionPage.tsx). sessionId
+// is the id join_session attaches to once authenticated.
+export function useWebSocket(session: Session, sessionId: string) {
   const socketRef = useRef<WebSocket | null>(null)
   // Always the latest session, read from inside onopen instead of the
   // "session" the connect effect below closed over at mount - see onopen's
@@ -16,10 +26,15 @@ export function useWebSocket(session: Session) {
   sessionRef.current = session
   const [status, setStatus] = useState<ConnectionStatus>('connecting')
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [joinStatus, setJoinStatus] = useState<JoinStatus>('joining')
+  const [title, setTitle] = useState<string | null>(null)
   const [messages, setMessages] = useState<LogMessage[]>([])
   const [partialTranscript, setPartialTranscript] = useState('')
   const [transcriptRows, setTranscriptRows] = useState<TranscriptMessage[]>([])
-  const [targetLanguage, setTargetLanguageState] = useState<string | null>(null)
+  // Overwritten by session_joined once it arrives (the session's own stored
+  // target language, or this default if it never had one) - this initial
+  // value is only ever visible for the brief joining window before that.
+  const [targetLanguage, setTargetLanguageState] = useState(DEFAULT_TARGET_LANGUAGE)
 
   // A socket that isn't OPEN yet (still connecting) throws on send(); one that's
   // already closing/closed just needs to be skipped. Every outgoing message goes
@@ -46,10 +61,11 @@ export function useWebSocket(session: Session) {
       // with whatever's current the moment the handshake actually happens.
       sendJson(buildAuthenticateMessage(sessionRef.current.access_token))
     }
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (socketRef.current !== socket) return
       setStatus('closed')
       setIsAuthenticated(false)
+      if (event.code === SESSION_NOT_FOUND_CLOSE_CODE) setJoinStatus('not_found')
     }
     socket.onmessage = (event) => {
       if (socketRef.current !== socket) return
@@ -57,6 +73,24 @@ export function useWebSocket(session: Session) {
 
       if (data.type === 'authenticated') {
         setIsAuthenticated(true)
+        // sessionId, not a value read off props again: this effect is
+        // mount-once (see below) and LiveSessionPage remounts this whole
+        // hook with key={id} on navigating to a different session, so the
+        // sessionId captured here at mount never goes stale.
+        sendJson(buildJoinSessionMessage(sessionId))
+        return
+      }
+      if (data.type === 'session_joined') {
+        setTitle(data.title)
+        setTranscriptRows(data.transcripts)
+        // Replaces the old "send DEFAULT_TARGET_LANGUAGE once authenticated"
+        // behavior: a session already has its own target_language (null for
+        // one that's never had a language chosen), and that's now the
+        // starting point instead of always defaulting.
+        const language = data.target_language ?? DEFAULT_TARGET_LANGUAGE
+        setTargetLanguageState(language)
+        sendJson(buildSetTargetLanguageMessage(language))
+        setJoinStatus('joined')
         return
       }
       if (data.type === 'partial_transcript') {
@@ -68,14 +102,19 @@ export function useWebSocket(session: Session) {
         setPartialTranscript('')
         return
       }
+      if (data.type === 'retranslated_transcripts') {
+        setTranscriptRows(data.transcripts)
+        return
+      }
       setMessages((prev) => [...prev, data])
     }
 
     return () => socket.close()
-    // Deliberately mount-once (not keyed on session): a later token refresh
-    // re-authenticates the same connection below instead of reconnecting it,
-    // and RequireAuth guarantees this hook is only ever mounted with a
-    // session in the first place.
+    // Deliberately mount-once (not keyed on session or sessionId): a later
+    // token refresh re-authenticates the same connection below instead of
+    // reconnecting it, RequireAuth guarantees this hook is only ever mounted
+    // with a session in the first place, and sessionId never changes without
+    // a remount (LiveSessionPage's key={id}).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -123,6 +162,8 @@ export function useWebSocket(session: Session) {
   return {
     status,
     isAuthenticated,
+    joinStatus,
+    title,
     messages,
     partialTranscript,
     transcriptRows,

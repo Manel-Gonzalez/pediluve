@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import './Nav.css'
 
@@ -13,7 +13,9 @@ export function Nav() {
 
   return (
     <nav className="nav">
-      <span className="nav-app-name">Pédiluve</span>
+      <Link to="/" className="nav-app-name">
+        Pédiluve
+      </Link>
       {user && <span className="nav-email">{user.email}</span>}
       <button onClick={handleSignOut}>Sign out</button>
     </nav>

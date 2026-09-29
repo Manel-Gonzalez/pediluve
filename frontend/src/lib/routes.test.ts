@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { postLoginRedirect } from './routes'
+import { liveSessionPath, postLoginRedirect, sessionPath } from './routes'
 
 describe('postLoginRedirect', () => {
   it('returns / when there is no state', () => {
@@ -16,5 +16,18 @@ describe('postLoginRedirect', () => {
 
   it('never redirects back to /login, even if that was the stored from', () => {
     expect(postLoginRedirect({ from: { pathname: '/login' } })).toBe('/')
+  })
+})
+
+describe('sessionPath', () => {
+  it('builds the read-only session detail path', () => {
+    expect(sessionPath('abc-123')).toBe('/sessions/abc-123')
+  })
+})
+
+describe('liveSessionPath', () => {
+  it('builds a distinct path from sessionPath', () => {
+    expect(liveSessionPath('abc-123')).toBe('/sessions/abc-123/live')
+    expect(liveSessionPath('abc-123')).not.toBe(sessionPath('abc-123'))
   })
 })
