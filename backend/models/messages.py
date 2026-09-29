@@ -27,6 +27,14 @@ class StopTranscription(BaseModel):
     type: Literal["stop_transcription"] = "stop_transcription"
 
 
+class JoinSession(BaseModel):
+    # Attaches this connection to an already-created session (created via the
+    # REST API's POST /api/sessions) rather than the WS implicitly creating
+    # one - required before start_transcription/set_target_language.
+    type: Literal["join_session"] = "join_session"
+    session_id: str
+
+
 class SetTargetLanguage(BaseModel):
     type: Literal["set_target_language"] = "set_target_language"
     target_language: str
@@ -59,6 +67,19 @@ class Transcript(BaseModel):
     # null (target_language does not) if DeepL fails for this specific message.
     translated_text: str | None = None
     target_language: str | None = None
+
+
+class SessionJoined(BaseModel):
+    # Reply to a successful join_session: the session's current metadata plus
+    # every transcript already stored, so a client re-attaching to an
+    # existing session (a resume, or a second tab) can render its history
+    # before anything new is said.
+    type: Literal["session_joined"] = "session_joined"
+    session_id: str
+    title: str | None
+    source_language: str | None
+    target_language: str | None
+    transcripts: list[Transcript]
 
 
 class RetranslatedTranscripts(BaseModel):

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
@@ -11,8 +12,10 @@ from models.messages import (
     ClientMessage,
     EchoMessage,
     ErrorMessage,
+    JoinSession,
     PartialTranscript,
     RetranslatedTranscripts,
+    SessionJoined,
     SetTargetLanguage,
     StartTranscription,
     Transcript,
@@ -26,6 +29,10 @@ AUTH_REQUIRED_CLOSE_CODE = 4401
 # Supabase Auth just couldn't be reached - a client should retry, not treat
 # this like an invalid session and force a re-login (see services/auth.py).
 AUTH_SERVICE_UNAVAILABLE_CLOSE_CODE = 4503
+# A join_session naming an id that doesn't exist, isn't a valid UUID, or
+# isn't visible to this user under RLS - all three look identical from the
+# client's side of RLS, so they're reported and closed the same way.
+SESSION_NOT_FOUND_CLOSE_CODE = 4404
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +57,15 @@ class ConnectionHandler:
         # Original text of every committed transcript for the life of this
         # connection, in order - lets a later target-language change
         # retranslate everything said so far, not just what's said from then
-        # on. Deliberately NOT reset per recording (unlike sequence/
-        # db_session_id): the frontend's own transcriptRows keeps accumulating
-        # across multiple stop/start cycles in the same connection too (never
-        # cleared on a fresh start_transcription), and retranslated_transcripts
-        # wholesale-replaces that list - resetting this per recording would
-        # silently drop every earlier recording's rows from the screen the
-        # next time the language changes.
+        # on. Deliberately NOT reset per recording, same as sequence and
+        # db_session_id: all three are seeded once by join_session and carry
+        # across every pause/resume cycle in the same visit, because they all
+        # describe the one underlying DB session, not a single recording
+        # take. The frontend's own transcriptRows accumulates the same way
+        # (never cleared on a fresh start_transcription), and
+        # retranslated_transcripts wholesale-replaces that list - resetting
+        # this per recording would silently drop every earlier take's rows
+        # from the screen the next time the language changes.
         self.committed_texts: list[str] = []
         # Bumped on every retranslation-triggering language change; a background
         # retranslation checks it's still current before sending its result, so
@@ -70,7 +79,7 @@ class ConnectionHandler:
 
     def _spawn_background(self, coro) -> None:
         # Tracked so the task isn't garbage-collected mid-flight, and so
-        # _stop_transcription can wait for it before ending the DB session.
+        # _pause_transcription can wait for it before returning.
         task = asyncio.create_task(coro)
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
@@ -174,15 +183,24 @@ class ConnectionHandler:
             await self.send(EchoMessage(text=echo_request.text).model_dump())
             return
 
+        if msg_type == "join_session":
+            await self._join_session(data)
+            return
+
         if msg_type == "start_transcription":
             await self._start_transcription(data)
             return
 
         if msg_type == "stop_transcription":
-            await self._stop_transcription()
+            await self._pause_transcription()
             return
 
         if msg_type == "set_target_language":
+            if self.db_session_id is None:
+                await self.send(
+                    ErrorMessage(message="Join a session before setting the target language").model_dump()
+                )
+                return
             try:
                 request = SetTargetLanguage.model_validate(data)
             except ValidationError as exc:
@@ -215,8 +233,66 @@ class ConnectionHandler:
 
         await self.send(ErrorMessage(message=f"Unknown message type: {msg_type}").model_dump())
 
+    async def _join_session(self, data: dict) -> None:
+        if self.db_session_id is not None:
+            await self.send(ErrorMessage(message="Session already joined").model_dump())
+            return
+
+        try:
+            request = JoinSession.model_validate(data)
+        except ValidationError as exc:
+            await self.send(ErrorMessage(message=f"Invalid message: {exc}").model_dump())
+            return
+
+        try:
+            uuid.UUID(request.session_id)
+        except ValueError:
+            await self._reject("Session not found", code=SESSION_NOT_FOUND_CLOSE_CODE)
+            return
+
+        try:
+            row = await supabase.get_session_with_messages(self.user, request.session_id)
+        except Exception:
+            logger.exception("Could not load session")
+            await self.send(ErrorMessage(message="Could not load session").model_dump())
+            return
+
+        if row is None:
+            await self._reject("Session not found", code=SESSION_NOT_FOUND_CLOSE_CODE)
+            return
+
+        messages = row["messages"]
+        self.db_session_id = row["id"]
+        self.sequence = max((message["sequence"] for message in messages), default=-1) + 1
+        self.committed_texts = [message["original_text"] for message in messages]
+        self.source_language = row["source_language"]
+        self.target_language = row["target_language"]
+
+        await self.send(
+            SessionJoined(
+                session_id=row["id"],
+                title=row["title"],
+                source_language=row["source_language"],
+                target_language=row["target_language"],
+                transcripts=[
+                    Transcript(
+                        original_text=message["original_text"],
+                        translated_text=message["translated_text"],
+                        target_language=message["target_language"],
+                    )
+                    for message in messages
+                ],
+            ).model_dump()
+        )
+
     async def _start_transcription(self, data: dict) -> None:
         if self.stt_session is not None:
+            return
+
+        if self.db_session_id is None:
+            await self.send(
+                ErrorMessage(message="Join a session before starting transcription").model_dump()
+            )
             return
 
         try:
@@ -225,8 +301,8 @@ class ConnectionHandler:
             await self.send(ErrorMessage(message=f"Invalid message: {exc}").model_dump())
             return
 
-        # Captured for display/persistence (KAN-6) and a future Phase-3 re-translation
-        # use. Not yet passed to RealtimeTranscriptionSession.connect(): whether
+        # Captured for display/persistence and a future re-translation use. Not
+        # yet passed to RealtimeTranscriptionSession.connect(): whether
         # scribe_v2_realtime even accepts a language hint is unconfirmed (see
         # docs/decisions.md) - not something to guess at on an external API.
         self.source_language = request.source_language
@@ -238,16 +314,14 @@ class ConnectionHandler:
             return
 
         self.stt_session = session
-        self.sequence = 0
-        try:
-            self.db_session_id = await supabase.create_session(
-                self.user,
-                source_language=self.source_language,
-                target_language=self.target_language,
+        if self.source_language is not None:
+            # Fire-and-forget, like _persist_target_language below: a resume
+            # can re-state the source language (e.g. after a stop/start with a
+            # different mic setup), and the main receive loop must not stall
+            # on the write.
+            self._spawn_background(
+                self._persist_source_language(self.db_session_id, self.source_language)
             )
-        except Exception:
-            logger.exception("Could not create Supabase session")
-            self.db_session_id = None
 
         # Committed transcripts are queued rather than awaited inline here, so a
         # slow (or slow-to-fail) DeepL call can't stall relaying the next partial/
@@ -257,7 +331,12 @@ class ConnectionHandler:
         self.relay_task = asyncio.create_task(self._relay_transcripts(session))
         self.transcript_worker_task = asyncio.create_task(self._process_transcript_queue())
 
-    async def _stop_transcription(self) -> None:
+    async def _pause_transcription(self) -> None:
+        # Winds down the current recording take only - db_session_id (and
+        # everything seeded from it: sequence, committed_texts, source/target
+        # language) is untouched, so a later start_transcription resumes the
+        # same session instead of needing a fresh join_session. Ending the DB
+        # session itself is _cleanup's job alone (see there for why).
         if self.stt_session is not None:
             await self.stt_session.close()
         if self.relay_task is not None:
@@ -268,7 +347,6 @@ class ConnectionHandler:
             self.transcript_worker_task.cancel()
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
-        await self._end_db_session()
         self.stt_session = None
         self.relay_task = None
         self.transcript_queue = None
@@ -409,6 +487,12 @@ class ConnectionHandler:
         except Exception:
             logger.exception("Could not update session target language")
 
+    async def _persist_source_language(self, session_id: str, source_language: str) -> None:
+        try:
+            await supabase.update_session_source_language(self.user, session_id, source_language)
+        except Exception:
+            logger.exception("Could not update session source language")
+
     async def _end_db_session(self) -> None:
         if self.db_session_id is None:
             return
@@ -417,6 +501,16 @@ class ConnectionHandler:
         except Exception:
             logger.exception("Could not end Supabase session")
         self.db_session_id = None
+
+    async def _pause_and_end(self) -> None:
+        await self._pause_transcription()
+        # Ending the DB session lives here, not in _pause_transcription: a
+        # stop_transcription message is a pause the same connection can
+        # resume from (start_transcription again, no re-join needed), while
+        # disconnecting is leaving the session's live view entirely. Doing it
+        # only here means ended_at is written exactly once per visit, on
+        # disconnect - not on every stop/start cycle within one.
+        await self._end_db_session()
 
     async def _cleanup(self) -> None:
         # Same graceful wind-down as an explicit stop_transcription: closing
@@ -429,12 +523,11 @@ class ConnectionHandler:
         # client disconnect delivers "websocket.disconnect" and lets the app
         # keep running, but the ASGI test client's teardown cancels the whole
         # app task right after sending it) - so plain `await
-        # self._stop_transcription()` here would itself get cut short.
-        # asyncio.shield() decouples _stop_transcription from that
-        # cancellation; the loop re-awaits it if our own await-of-the-shield
-        # is what got cancelled, only letting a cancellation through once
-        # _stop_transcription has actually finished.
-        cleanup_task = asyncio.ensure_future(self._stop_transcription())
+        # self._pause_and_end()` here would itself get cut short.
+        # asyncio.shield() decouples it from that cancellation; the loop
+        # re-awaits it if our own await-of-the-shield is what got cancelled,
+        # only letting a cancellation through once it has actually finished.
+        cleanup_task = asyncio.ensure_future(self._pause_and_end())
         while True:
             try:
                 await asyncio.shield(cleanup_task)
