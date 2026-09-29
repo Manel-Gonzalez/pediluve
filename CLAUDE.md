@@ -111,7 +111,10 @@ playback in browser. One fixed voice for v1, not one per language.
 **Phase 6 (parked, exploratory only):** speaker labels if multiple audio inputs. No multi-channel
 capture exists yet and there's no confirmed use case for it — start with a spike (is there a real
 multi-mic scenario? is `use_multi_channel` viable, or REST batch the only path?) before committing
-to implementation subtasks. Realtime STT has no diarization on its own. Also: further VAD tuning.
+to implementation subtasks. Realtime STT has no diarization on its own. Also: further VAD tuning;
+persisting the in-flight partial transcript (so pausing mid-utterance doesn't lose it) plus manual
+edit/delete of a message's original text — see `docs/decisions.md` for why this isn't a quick
+add-on.
 
 ## What NOT to do
 
