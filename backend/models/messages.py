@@ -8,6 +8,13 @@ class ClientMessage(BaseModel):
     text: str
 
 
+class Authenticate(BaseModel):
+    # Must be the first text message on the connection; may be re-sent later
+    # to swap in a refreshed access_token without reconnecting.
+    type: Literal["authenticate"] = "authenticate"
+    access_token: str
+
+
 class StartTranscription(BaseModel):
     type: Literal["start_transcription"] = "start_transcription"
     audio_format: str = "pcm_16000"
@@ -23,6 +30,11 @@ class StopTranscription(BaseModel):
 class SetTargetLanguage(BaseModel):
     type: Literal["set_target_language"] = "set_target_language"
     target_language: str
+
+
+class Authenticated(BaseModel):
+    type: Literal["authenticated"] = "authenticated"
+    user_id: str
 
 
 class EchoMessage(BaseModel):
