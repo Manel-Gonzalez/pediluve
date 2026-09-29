@@ -64,3 +64,46 @@ export type ServerMessage =
   | TranscriptMessage
   | AuthenticatedMessage
   | RetranslatedTranscriptsMessage
+
+// ── REST session models (KAN-23), matching backend/models/sessions.py ─────
+// Note: unrelated to @supabase/supabase-js's Session (the auth session) used
+// throughout useAuth/useWebSocket - this "session" is a recording/transcript
+// session, the thing the home page lists.
+
+export type SessionSummary = {
+  id: string
+  created_at: string
+  ended_at: string | null
+  source_language: string | null
+  target_language: string | null
+  title: string | null
+  message_count: number
+}
+
+export type SessionListResponse = {
+  items: SessionSummary[]
+  has_more: boolean
+}
+
+export type MessageRecord = {
+  id: string
+  sequence: number
+  created_at: string
+  original_text: string
+  translated_text: string | null
+  target_language: string | null
+}
+
+export type SessionDetail = SessionSummary & {
+  messages: MessageRecord[]
+}
+
+export type MessageTranslation = {
+  message_id: string
+  translated_text: string | null
+}
+
+export type TranslateResponse = {
+  target_language: string
+  translations: MessageTranslation[]
+}
