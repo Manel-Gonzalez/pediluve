@@ -10,3 +10,16 @@ export function postLoginRedirect(state: unknown): string {
   if (!from || from === '/login') return '/'
   return from
 }
+
+// The home page's row links here: a read-only view of a past session's full
+// transcript (KAN-26).
+export function sessionPath(id: string): string {
+  return `/sessions/${id}`
+}
+
+// Distinct from sessionPath: the live recording view (KAN-38) joins the
+// session over the WebSocket rather than just reading it, so it gets its own
+// route instead of overloading the read-only one.
+export function liveSessionPath(id: string): string {
+  return `/sessions/${id}/live`
+}
