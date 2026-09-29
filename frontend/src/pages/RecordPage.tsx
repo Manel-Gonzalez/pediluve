@@ -124,10 +124,11 @@ function RecordPageContent({ session }: { session: Session }) {
 
         <label>
           Target language
-          <select value={targetLanguage ?? ''} onChange={(event) => setTargetLanguage(event.target.value)}>
-            <option value="" disabled>
-              Select a language
-            </option>
+          <select
+            value={targetLanguage}
+            disabled={!isAuthenticated}
+            onChange={(event) => setTargetLanguage(event.target.value)}
+          >
             {SUPPORTED_LANGUAGES.map((code) => (
               <option key={code} value={code}>
                 {code}

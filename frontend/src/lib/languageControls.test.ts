@@ -3,12 +3,23 @@ import {
   buildSetTargetLanguageMessage,
   buildStartTranscriptionMessage,
   canChangeSourceLanguage,
+  DEFAULT_TARGET_LANGUAGE,
   SUPPORTED_LANGUAGES,
 } from './languageControls'
 
 describe('SUPPORTED_LANGUAGES', () => {
   it('matches the DeepL-supported candidate set from CLAUDE.md', () => {
     expect(SUPPORTED_LANGUAGES).toEqual(['es', 'ca', 'en', 'fr', 'de'])
+  })
+})
+
+describe('DEFAULT_TARGET_LANGUAGE', () => {
+  it('is a supported language, so the initial selection is always valid', () => {
+    expect(SUPPORTED_LANGUAGES).toContain(DEFAULT_TARGET_LANGUAGE)
+  })
+
+  it('is es', () => {
+    expect(DEFAULT_TARGET_LANGUAGE).toBe('es')
   })
 })
 
