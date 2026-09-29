@@ -339,6 +339,35 @@ whole view; a still-untranslated `original_text` is a legitimate result, not a b
 
 **Why:** No need for SSR or routing in v1 — it's a single-page tool. Vite's dev server is faster. Less boilerplate. Next.js would be overkill here.
 
+## Future: persisting partial transcripts + manual edit (parked, Phase 6+)
+
+**Context:** Manel's idea, while verifying Phase 4 by hand: if you pause right as you're mid-sentence,
+the in-flight `partial_transcript` is lost — only a `committed_transcript` (ElevenLabs' own "this
+segment is final" signal) ever reaches `_handle_committed_transcript` and gets saved. Proposal: save
+the partial too, marked as such, so an accidental pause doesn't lose it; a further idea in the same
+vein is letting a user manually edit or delete part of a message's original text later.
+
+**Why this is parked, not a quick add-on:**
+- Partials fire many times a second while speaking (each is ElevenLabs revising its own guess at the
+  current segment) - naively inserting a `messages` row per partial would flood the table. This needs
+  an upsert-the-latest-partial-into-one-row model, not the existing append-only insert path.
+- ElevenLabs already sends an `edited_transcript` event when it revises a previously-committed
+  segment - today `_relay_transcripts` only logs it (`elif event_type in ("session_started",
+  "warning", "edited_transcript"): logger.info(...)`). That event is the most likely mechanism for
+  "partial became final, replace its row" - worth investigating before designing a custom
+  reconciliation scheme, rather than assuming one is needed from scratch.
+- Needs a schema change (a `status`/`is_partial` column on `messages`, or a separate table) and a WS
+  contract change (a new message type, or a status field on the existing `transcript` message) -
+  exactly the two things `CLAUDE.md`'s "ask before" list flags, so this isn't a fix folded into
+  whatever ticket happens to touch `_handle_committed_transcript` next.
+- Manual edit/delete of `original_text` raises its own follow-on questions this hasn't been scoped
+  for yet: does editing a message re-trigger translation (spends DeepL quota) or just update the
+  displayed original, and does `sequence` stay stable under a delete (almost certainly yes, per the
+  reasoning `messages_session_sequence_unique` was added for - see KAN-22 above).
+
+**Revisit:** scope it as its own planned piece of work (`plan-task`) once there's appetite to build
+it - candidate for Phase 6 alongside the other parked items, not a Phase 4/5 blocker.
+
 ## Future: production deploy on AWS (not started, notes for later)
 
 **If this ever needs to run in production:**
