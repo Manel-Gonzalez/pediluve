@@ -15,3 +15,12 @@
 -- correctly have no translated messages, per the same reasoning above.
 
 alter table sessions alter column target_language drop not null;
+
+-- Phase 4 (KAN-10) lets one session be recorded into across multiple pause/
+-- resume cycles, possibly from more than one browser tab. Two tabs recording
+-- into the same session at once would otherwise silently write duplicate
+-- sequence numbers (today's index on (session_id, sequence) isn't unique) -
+-- this makes that fail loudly at the database instead of corrupting message
+-- order. Safe to add now: sequences are already unique per session in
+-- practice, so this constraint holds on existing data with nothing to fix.
+alter table messages add constraint messages_session_sequence_unique unique (session_id, sequence);
