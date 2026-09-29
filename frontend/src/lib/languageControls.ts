@@ -5,6 +5,11 @@ import type { SetTargetLanguageMessage, StartTranscriptionMessage } from './type
 // deepl.SUPPORTED_TARGET_LANGUAGES.
 export const SUPPORTED_LANGUAGES = ['es', 'ca', 'en', 'fr', 'de'] as const
 
+// Sent automatically once authenticated, before the user has touched the
+// target-language control - otherwise any transcript committed before their
+// first manual selection would be translated to nothing and stuck that way.
+export const DEFAULT_TARGET_LANGUAGE = 'es'
+
 export function buildStartTranscriptionMessage(
   audioFormat: string,
   sourceLanguage: string | null,

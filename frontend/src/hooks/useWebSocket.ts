@@ -2,7 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { getWebSocketUrl } from '../lib/api'
 import { buildAuthenticateMessage, type ConnectionStatus } from '../lib/auth'
-import { buildSetTargetLanguageMessage, buildStartTranscriptionMessage } from '../lib/languageControls'
+import {
+  buildSetTargetLanguageMessage,
+  buildStartTranscriptionMessage,
+  DEFAULT_TARGET_LANGUAGE,
+} from '../lib/languageControls'
 import type { LogMessage, ServerMessage, TranscriptMessage } from '../lib/types'
 
 // Requires a real session (not Session | null): RequireAuth guarantees one
@@ -19,7 +23,10 @@ export function useWebSocket(session: Session) {
   const [messages, setMessages] = useState<LogMessage[]>([])
   const [partialTranscript, setPartialTranscript] = useState('')
   const [transcriptRows, setTranscriptRows] = useState<TranscriptMessage[]>([])
-  const [targetLanguage, setTargetLanguageState] = useState<string | null>(null)
+  // Never null: DEFAULT_TARGET_LANGUAGE is sent automatically once
+  // authenticated (below), so there's no "unset" state left to represent -
+  // every committed transcript from the very first one gets translated.
+  const [targetLanguage, setTargetLanguageState] = useState(DEFAULT_TARGET_LANGUAGE)
 
   // A socket that isn't OPEN yet (still connecting) throws on send(); one that's
   // already closing/closed just needs to be skipped. Every outgoing message goes
@@ -88,6 +95,18 @@ export function useWebSocket(session: Session) {
   useEffect(() => {
     sendJson(buildAuthenticateMessage(session.access_token))
   }, [session.access_token, sendJson])
+
+  // Ensures a target language is set server-side before the user ever starts
+  // recording, even if they never touch the selector - otherwise the
+  // earliest committed transcripts would have no target language and never
+  // get translated. Fires once, right when authentication completes: the
+  // selector stays disabled until then (RecordPage.tsx), so targetLanguage
+  // can't have changed from its default by this point.
+  useEffect(() => {
+    if (isAuthenticated) {
+      sendJson(buildSetTargetLanguageMessage(DEFAULT_TARGET_LANGUAGE))
+    }
+  }, [isAuthenticated, sendJson])
 
   const sendMessage = useCallback(
     (text: string) => {
