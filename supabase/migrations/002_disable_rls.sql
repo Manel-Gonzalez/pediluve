@@ -1,6 +1,10 @@
 -- Pédiluve — re-assert RLS off
 -- Run this in Supabase SQL Editor (Dashboard → SQL Editor → New query)
 --
+-- SUPERSEDED by 003_auth_and_rls.sql (Phase 3 / KAN-13): once accounts exist,
+-- RLS goes back on with real owner policies. Kept here as history, not to be
+-- re-run after 003.
+--
 -- 001_initial.sql already disabled RLS on both tables, but Supabase's
 -- dashboard security nag (the "Unrestricted table" warning) prompts you to
 -- re-enable it with a starter read-only policy. That silently breaks
