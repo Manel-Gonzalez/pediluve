@@ -34,10 +34,18 @@ class ConnectionHandler:
         self.target_language: str | None = None
         self.transcript_queue: asyncio.Queue[str] | None = None
         self.transcript_worker_task: asyncio.Task | None = None
+        self._background_tasks: set[asyncio.Task] = set()
 
     async def send(self, payload: dict) -> None:
         async with self.send_lock:
             await self.websocket.send_json(payload)
+
+    def _spawn_background(self, coro) -> None:
+        # Tracked so the task isn't garbage-collected mid-flight, and so
+        # _stop_transcription can wait for it before ending the DB session.
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def run(self) -> None:
         await self.websocket.accept()
@@ -101,6 +109,13 @@ class ConnectionHandler:
                 )
                 return
             self.target_language = request.target_language
+            if self.db_session_id is not None:
+                # Fire-and-forget: this is a network write, and the main receive
+                # loop must keep reading audio/messages off the socket without
+                # stalling on it (same reasoning as queuing committed transcripts).
+                self._spawn_background(
+                    self._persist_target_language(self.db_session_id, self.target_language)
+                )
             return
 
         await self.send(ErrorMessage(message=f"Unknown message type: {msg_type}").model_dump())
@@ -130,7 +145,10 @@ class ConnectionHandler:
         self.stt_session = session
         self.sequence = 0
         try:
-            self.db_session_id = await supabase.create_session()
+            self.db_session_id = await supabase.create_session(
+                source_language=self.source_language,
+                target_language=self.target_language or supabase.DEFAULT_TARGET_LANGUAGE,
+            )
         except Exception:
             logger.exception("Could not create Supabase session")
             self.db_session_id = None
@@ -152,6 +170,8 @@ class ConnectionHandler:
             await self.transcript_queue.join()
         if self.transcript_worker_task is not None:
             self.transcript_worker_task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
         await self._end_db_session()
         self.stt_session = None
         self.relay_task = None
@@ -202,10 +222,22 @@ class ConnectionHandler:
         if self.db_session_id is None:
             return
         try:
-            await supabase.save_message(self.db_session_id, self.sequence, text)
+            await supabase.save_message(
+                self.db_session_id,
+                self.sequence,
+                text,
+                translated_text=translated_text,
+                target_language=target_language,
+            )
             self.sequence += 1
         except Exception:
             logger.exception("Could not save message to Supabase")
+
+    async def _persist_target_language(self, session_id: str, target_language: str) -> None:
+        try:
+            await supabase.update_session_target_language(session_id, target_language)
+        except Exception:
+            logger.exception("Could not update session target language")
 
     async def _end_db_session(self) -> None:
         if self.db_session_id is None:

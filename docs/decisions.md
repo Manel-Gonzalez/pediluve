@@ -53,6 +53,30 @@ event payload). If a language-hint param exists, thread `source_language` throug
 in `services/elevenlabs.py::connect()`. If not, it stays a label used for
 display/persistence only.
 
+## Phase 2: sessions.target_language can hold a meaningless placeholder
+
+**Context:** `sessions.target_language` is `not null` (schema constraint from
+Phase 0/1). When a recording starts before the user has ever picked a target
+language, KAN-6's `create_session()` still has to write *something* into that
+column, so it falls back to `DEFAULT_TARGET_LANGUAGE` ("en") - the same Phase 1
+placeholder. `ConnectionHandler.target_language` itself stays `None` in that case
+(DeepL is correctly never called, every `messages.translated_text` for that
+session stays null), but the `sessions` row ends up saying `target_language='en'`
+as if the session had been translated to English.
+
+**Why this is left as-is for now:** fixing it properly means making the column
+nullable (a migration), which is a schema change beyond KAN-6's scope. The
+placeholder doesn't cause a functional bug today - `ConnectionHandler.target_language`
+is the real, independent signal for "should we call DeepL", never synced from the
+DB default - but a future reader must not trust `sessions.target_language` alone
+to mean "this session has translations".
+
+**Revisit in Phase 3** ("open a past session, re-translate to a different
+language"): a consumer must check whether any `messages.translated_text` is
+non-null for that session, not just read `sessions.target_language`, to know
+whether translation was ever actually used. Consider making the column nullable
+at that point instead of carrying the placeholder further.
+
 **Also unverified (same network restriction):** whether DeepL's `/v2/translate`
 actually supports `CA` (Catalan) as a `target_lang` — `services/deepl.py`'s
 `_TARGET_LANGUAGE_CODES` maps it optimistically. If DeepL rejects it, `translate()`
