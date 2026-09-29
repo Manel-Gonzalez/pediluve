@@ -56,7 +56,7 @@ pediluve/
 
 - **Language:** code, comments, commit messages, and docs in **English**. UI strings can be in English for now.
 - **Commits:** conventional commits. `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`. One logical change per commit.
-- **Branches:** work on `main` for Phase 0. From Phase 1 on, one branch per phase (`phase-1-audio`, `phase-2-translation`, etc.), merge to `main` when the phase works end-to-end.
+- **Branches:** work on `main` for Phase 0. From Phase 1 on, one branch per Jira card: `feature/<KAN-N>` for a feature (a phase's parent Story, e.g. `feature/KAN-4`), `fix/<KAN-N>` for a bug fix, `chore/<KAN-N>` for anything else — prefix matches the card's nature, not its issue type. Subtasks are commits on the parent card's branch, not their own branches. Merge to `main` when the card's work is done and (for a phase) works end-to-end.
 - **Types:** TypeScript strict mode on. Pydantic models for every request/response shape.
 - **Secrets:** never hardcode API keys. Read from `.env`. Never commit `.env`.
 - **Errors:** WebSocket errors go back to the client as `{type: "error", message: "..."}`. Don't let the socket die silently.
