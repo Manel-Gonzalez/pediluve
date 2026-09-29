@@ -280,7 +280,15 @@ class ConnectionHandler:
             if event_type == "partial_transcript":
                 await self.send(PartialTranscript(text=event["text"]).model_dump())
             elif event_type == "committed_transcript":
-                await self.transcript_queue.put(event["text"])
+                # ElevenLabs' VAD occasionally commits a segment with no
+                # recognized speech (silence, noise) - an empty or
+                # whitespace-only text rather than skipping the event
+                # entirely. Filtered here, at the source, so it never reaches
+                # the client, spends a DeepL call, or clutters Supabase/the
+                # in-memory retranslation history with a blank row.
+                text = event["text"]
+                if text.strip():
+                    await self.transcript_queue.put(text)
             elif event_type in ("session_started", "warning", "edited_transcript"):
                 logger.info("ElevenLabs event: %s", event)
             elif "error" in event:

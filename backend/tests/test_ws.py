@@ -316,6 +316,32 @@ def test_start_transcription_relays_partial_and_committed_events(monkeypatch, au
     assert fake_cls.instances[0].audio_format == "pcm_16000"
 
 
+def test_empty_committed_transcripts_are_not_processed(monkeypatch, authenticated_ws, fake_supabase):
+    # ElevenLabs' VAD occasionally commits a segment with no recognized
+    # speech (silence, noise) - an empty or whitespace-only text, not a
+    # missing one. These must never reach the client, DeepL, or Supabase.
+    canned = [
+        {"message_type": "committed_transcript", "text": ""},
+        {"message_type": "committed_transcript", "text": "   "},
+        {"message_type": "committed_transcript", "text": "hello"},
+    ]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "start_transcription"})
+        assert ws.receive_json() == {
+            "type": "transcript",
+            "original_text": "hello",
+            "translated_text": None,
+            "target_language": None,
+        }
+        ws.send_json({"type": "stop_transcription"})
+
+    assert len(fake_supabase["messages"]) == 1
+    assert fake_supabase["messages"][0]["original_text"] == "hello"
+
+
 def test_audio_chunks_are_forwarded_to_the_session(monkeypatch, authenticated_ws):
     fake_cls = make_fake_session_class([])
     monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
