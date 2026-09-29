@@ -252,3 +252,138 @@ def test_delete_session_with_an_unknown_id_is_404(monkeypatch, authed):
 def test_delete_session_with_a_non_uuid_id_is_404(authed):
     response = client.delete("/api/sessions/not-a-uuid")
     assert response.status_code == 404
+
+
+# ── POST /api/sessions/{id}/translate ────────────────────────────────────
+
+
+def test_translate_session_returns_translations_in_order(monkeypatch, authed):
+    row = _session_row()
+    row["messages"] = [
+        {
+            "id": "msg-1",
+            "sequence": 0,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "original_text": "hello",
+            "translated_text": None,
+            "target_language": None,
+        },
+        {
+            "id": "msg-2",
+            "sequence": 1,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "original_text": "world",
+            "translated_text": None,
+            "target_language": None,
+        },
+    ]
+
+    async def fake_get_session_with_messages(user, session_id):
+        return row
+
+    async def fake_translate_many(texts, target_language):
+        assert texts == ["hello", "world"]
+        assert target_language == "es"
+        return ["hola", "mundo"]
+
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_with_messages", fake_get_session_with_messages
+    )
+    monkeypatch.setattr("routers.sessions.deepl.translate_many", fake_translate_many)
+
+    response = client.post(f"/api/sessions/{row['id']}/translate", json={"target_language": "es"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["target_language"] == "es"
+    assert body["translations"] == [
+        {"message_id": "msg-1", "translated_text": "hola"},
+        {"message_id": "msg-2", "translated_text": "mundo"},
+    ]
+
+
+def test_translate_session_with_an_unsupported_language_is_400(monkeypatch, authed):
+    async def unexpected_call(*args, **kwargs):
+        raise AssertionError("should not be called for an unsupported language")
+
+    monkeypatch.setattr("routers.sessions.supabase.get_session_with_messages", unexpected_call)
+    monkeypatch.setattr("routers.sessions.deepl.translate_many", unexpected_call)
+
+    response = client.post(f"/api/sessions/{uuid.uuid4()}/translate", json={"target_language": "xx"})
+
+    assert response.status_code == 400
+
+
+def test_translate_session_with_an_unknown_id_is_404_and_deepl_is_not_called(monkeypatch, authed):
+    async def fake_get_session_with_messages(user, session_id):
+        return None
+
+    async def unexpected_translate_many(*args, **kwargs):
+        raise AssertionError("deepl.translate_many should not be called for an unknown session")
+
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_with_messages", fake_get_session_with_messages
+    )
+    monkeypatch.setattr("routers.sessions.deepl.translate_many", unexpected_translate_many)
+
+    response = client.post(f"/api/sessions/{uuid.uuid4()}/translate", json={"target_language": "es"})
+
+    assert response.status_code == 404
+
+
+def test_translate_session_with_a_non_uuid_id_is_404(authed):
+    response = client.post("/api/sessions/not-a-uuid/translate", json={"target_language": "es"})
+    assert response.status_code == 404
+
+
+def test_translate_session_maps_a_failed_translation_to_null(monkeypatch, authed):
+    row = _session_row()
+    row["messages"] = [
+        {
+            "id": "msg-1",
+            "sequence": 0,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "original_text": "hello",
+            "translated_text": None,
+            "target_language": None,
+        }
+    ]
+
+    async def fake_get_session_with_messages(user, session_id):
+        return row
+
+    async def fake_translate_many(texts, target_language):
+        return [None]
+
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_with_messages", fake_get_session_with_messages
+    )
+    monkeypatch.setattr("routers.sessions.deepl.translate_many", fake_translate_many)
+
+    response = client.post(f"/api/sessions/{row['id']}/translate", json={"target_language": "es"})
+
+    assert response.status_code == 200
+    assert response.json()["translations"] == [{"message_id": "msg-1", "translated_text": None}]
+
+
+def test_translate_session_with_no_messages_returns_an_empty_list_and_does_not_call_deepl(
+    monkeypatch, authed
+):
+    row = _session_row()
+    row["messages"] = []
+
+    async def fake_get_session_with_messages(user, session_id):
+        return row
+
+    async def unexpected_translate_many(*args, **kwargs):
+        raise AssertionError("deepl.translate_many should not be called for an empty session")
+
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_with_messages", fake_get_session_with_messages
+    )
+    monkeypatch.setattr("routers.sessions.deepl.translate_many", unexpected_translate_many)
+
+    response = client.post(f"/api/sessions/{row['id']}/translate", json={"target_language": "es"})
+
+    assert response.status_code == 200
+    assert response.json()["translations"] == []

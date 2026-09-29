@@ -191,6 +191,32 @@ area with no payoff yet for a single-developer local project where the developer
 own password. Straightforward to add later using supabase-js's existing support if this ever needs
 more than one real user.
 
+## Phase 4: re-translating a past session's history is on-demand, not persisted
+
+**Context:** KAN-10's history view lets a user open a past session and view it translated into a
+language other than the one it was originally recorded with. `messages.translated_text`/
+`target_language` already hold the live-session translation from when it was recorded.
+
+**Chosen:** `POST /api/sessions/{id}/translate` calls DeepL fresh every time the view is opened in a
+new language and returns the result without writing anything back - the original
+`messages.translated_text`/`target_language` stay exactly as recorded. **Why:** persisting every
+language a session has ever been viewed in would need a join table (`message_id`, `language`,
+`translated_text`) for a feature that's read far more rarely than it would be written, and it
+would let stored translations silently go stale if DeepL's model changes. On-demand keeps the
+schema as-is and the history view always reflects DeepL's current output.
+
+**Cost:** viewing a session's history in a language it hasn't been viewed in before spends DeepL
+characters again, every time - on the free tier's monthly quota, repeatedly opening old sessions in
+several languages adds up. Not a problem yet at single-user local-only scale; worth revisiting
+(e.g. a short-lived cache) if this ever runs with real usage volume.
+
+**Batching:** `deepl.translate_many()` sends up to 50 texts as repeated `text` fields in one DeepL
+request rather than one request per message - a session with dozens of messages would otherwise be
+dozens of sequential round trips just to open the page. Chunks beyond 50 (DeepL's per-request limit
+is unconfirmed from this sandboxed environment, same restriction noted above for Catalan) go in
+further requests; a failed chunk maps to `null` for each of its messages rather than failing the
+whole view; a still-untranslated `original_text` is a legitimate result, not a bug to hide.
+
 ## Persistence: Supabase over local SQLite
 
 **Chosen:** Supabase (hosted PostgreSQL)

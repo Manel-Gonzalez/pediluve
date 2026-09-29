@@ -2,9 +2,18 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from models.sessions import SessionCreate, SessionDetail, SessionListResponse, SessionSummary, SessionUpdate
+from models.sessions import (
+    MessageTranslation,
+    SessionCreate,
+    SessionDetail,
+    SessionListResponse,
+    SessionSummary,
+    SessionUpdate,
+    TranslateRequest,
+    TranslateResponse,
+)
 from routers.me import get_current_user
-from services import supabase
+from services import deepl, supabase
 from services.auth import AuthenticatedUser
 
 router = APIRouter(prefix="/api")
@@ -84,3 +93,39 @@ async def delete_session(
     deleted = await supabase.delete_session(current_user, session_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Session not found")
+
+
+@router.post("/sessions/{session_id}/translate", response_model=TranslateResponse)
+async def translate_session(
+    session_id: str,
+    request: TranslateRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> TranslateResponse:
+    # Re-translates a stored session to a different language for viewing -
+    # nothing is written. The original live-session translation in
+    # messages.translated_text/target_language is untouched.
+    _validate_uuid(session_id)
+    if request.target_language not in deepl.SUPPORTED_TARGET_LANGUAGES:
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported target language: {request.target_language}"
+        )
+
+    row = await supabase.get_session_with_messages(current_user, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    messages = row["messages"]
+    translated_texts = (
+        await deepl.translate_many(
+            [message["original_text"] for message in messages], request.target_language
+        )
+        if messages
+        else []
+    )
+    return TranslateResponse(
+        target_language=request.target_language,
+        translations=[
+            MessageTranslation(message_id=message["id"], translated_text=translated_text)
+            for message, translated_text in zip(messages, translated_texts)
+        ],
+    )
