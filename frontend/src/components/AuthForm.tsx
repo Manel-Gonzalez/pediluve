@@ -65,7 +65,11 @@ export function AuthForm() {
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             required
-            minLength={6}
+            // Only enforced while registering: applying it to login too would
+            // block signing in to any account whose password predates this
+            // rule (or was set some other way, e.g. the dashboard/Admin API),
+            // with the browser rejecting the submit before signIn() ever runs.
+            minLength={mode === 'register' ? 6 : undefined}
             autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
           />
         </label>

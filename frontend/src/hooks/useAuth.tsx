@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
-import { describeAuthError } from '../lib/authErrors'
+import { ACCOUNT_ALREADY_EXISTS_MESSAGE, describeAuthError } from '../lib/authErrors'
 
 type SignInResult = { error: string | null }
 type SignUpResult = { error: string | null; needsEmailConfirmation: boolean }
@@ -47,13 +47,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = async (email: string, password: string): Promise<SignUpResult> => {
     const { data, error } = await supabase.auth.signUp({ email, password })
-    return {
-      error: error ? describeAuthError(error) : null,
-      // signUp() succeeds with data.session === null when email confirmation
-      // is required (the dashboard toggle KAN-15's Jira card notes) - the
-      // form needs to tell those two successful outcomes apart.
-      needsEmailConfirmation: !error && data.session === null,
+    if (error) return { error: describeAuthError(error), needsEmailConfirmation: false }
+    if (data.session !== null) return { error: null, needsEmailConfirmation: false }
+
+    // data.session === null with no error means either a genuine new signup
+    // pending confirmation, or - when "Confirm email" is on - Supabase's
+    // anti-enumeration response to re-registering an already-confirmed
+    // email: an "obfuscated/fake user object" with no identities attached
+    // (see @supabase/auth-js's own signUp() docs). Both come back in the
+    // exact same shape otherwise, so identities.length is the only signal
+    // that tells them apart.
+    if (data.user?.identities?.length === 0) {
+      return { error: ACCOUNT_ALREADY_EXISTS_MESSAGE, needsEmailConfirmation: false }
     }
+    return { error: null, needsEmailConfirmation: true }
   }
 
   const signOut = async (): Promise<void> => {

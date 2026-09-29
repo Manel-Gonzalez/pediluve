@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeAuthError } from './authErrors'
+import { ACCOUNT_ALREADY_EXISTS_MESSAGE, describeAuthError } from './authErrors'
 
 describe('describeAuthError', () => {
   it('rephrases invalid credentials into a plain-language message', () => {
@@ -8,9 +8,9 @@ describe('describeAuthError', () => {
     )
   })
 
-  it('rephrases a duplicate registration into a plain-language message', () => {
+  it('rephrases a duplicate registration into the shared already-exists message', () => {
     expect(describeAuthError({ message: 'User already registered' })).toBe(
-      'An account with this email already exists.',
+      ACCOUNT_ALREADY_EXISTS_MESSAGE,
     )
   })
 
