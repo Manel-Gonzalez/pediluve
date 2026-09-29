@@ -7,7 +7,6 @@ import { useAuth } from '../hooks/useAuth'
 import { ApiError, listSessions } from '../lib/api'
 import { appendSessions, removeSessionFromList, renameSessionInList } from '../lib/sessions'
 import type { SessionSummary } from '../lib/types'
-import './HomePage.css'
 
 const PAGE_SIZE = 20
 
@@ -77,16 +76,16 @@ function HomePageContent({ session }: { session: Session }) {
   }
 
   return (
-    <main className="home-page">
-      <div className="home-page-header">
-        <h1>Your sessions</h1>
+    <main className="max-w-2xl mx-auto px-4 py-8">
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl font-semibold text-ink-900">Your sessions</h1>
         <NewSessionModal session={session} />
       </div>
 
-      {loading && <p>Loading…</p>}
-      {error && <p className="home-page-error">{error}</p>}
+      {loading && <p className="text-ink-500">Loading…</p>}
+      {error && <p className="text-red-600">{error}</p>}
       {notice && (
-        <p className="home-page-notice">
+        <p className="flex items-center gap-2 bg-ink-50 rounded-md px-3 py-2 text-ink-600 mb-4">
           {notice}{' '}
           <button type="button" onClick={() => setNotice(null)}>
             Dismiss
@@ -95,11 +94,11 @@ function HomePageContent({ session }: { session: Session }) {
       )}
 
       {!loading && !error && sessions.length === 0 && (
-        <p className="home-page-empty">No sessions yet.</p>
+        <p className="text-ink-500">No sessions yet.</p>
       )}
 
       {sessions.length > 0 && (
-        <ul className="session-list">
+        <ul className="space-y-3">
           {sessions.map((item) => (
             <SessionListRow
               key={item.id}

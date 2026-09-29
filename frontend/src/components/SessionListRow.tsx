@@ -87,9 +87,9 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
   }
 
   return (
-    <li className="session-list-row">
+    <li className="flex items-center justify-between gap-4 rounded-lg border border-ink-200 p-4 transition-shadow hover:shadow-md hover:border-accent-200">
       {isEditing ? (
-        <div className="session-list-edit">
+        <div className="flex flex-col gap-1 flex-1">
           <input
             autoFocus
             maxLength={120}
@@ -101,13 +101,14 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
             // Enter is the only way to commit, so an accidental blur can't
             // silently rename the session.
             onBlur={() => !pending && cancelEditing()}
+            className="px-2 py-1 text-base border border-ink-200 rounded-md"
           />
-          {error && <span className="session-list-error">{error}</span>}
+          {error && <span className="text-sm text-red-600">{error}</span>}
         </div>
       ) : (
-        <Link to={sessionPath(item.id)} className="session-list-link">
-          <span className="session-list-title">{formatSessionTitle(item)}</span>
-          <span className="session-list-meta">
+        <Link to={sessionPath(item.id)} className="flex flex-col gap-1 text-inherit no-underline">
+          <span className="font-semibold text-ink-900">{formatSessionTitle(item)}</span>
+          <span className="text-sm text-ink-500">
             {new Date(item.created_at).toLocaleString()}
             {' · '}
             {item.source_language ?? '?'} → {item.target_language ?? '?'}
@@ -116,11 +117,20 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
           </span>
         </Link>
       )}
-      <div className="session-list-actions">
-        <button type="button" onClick={startEditing} disabled={isEditing}>
+      <div className="flex gap-2 flex-shrink-0">
+        <button
+          type="button"
+          onClick={startEditing}
+          disabled={isEditing}
+          className="px-3 py-1 text-sm rounded-md border border-accent-500 text-accent-500 hover:bg-accent-50 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
           Rename
         </button>
-        <button type="button" onClick={handleDelete}>
+        <button
+          type="button"
+          onClick={handleDelete}
+          className="px-3 py-1 text-sm rounded-md border border-ink-200 text-red-600 hover:bg-red-50"
+        >
           Delete
         </button>
       </div>
