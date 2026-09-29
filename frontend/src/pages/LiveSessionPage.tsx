@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { TranscriptRow } from '../components/TranscriptRow'
 import { useAuth } from '../hooks/useAuth'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { useMicrophone } from '../hooks/useMicrophone'
@@ -8,7 +9,6 @@ import { getChunkDurationMs } from '../lib/api'
 import { describeConnectionStatus } from '../lib/auth'
 import { canChangeSourceLanguage, SUPPORTED_LANGUAGES } from '../lib/languageControls'
 import { recordButtonLabel } from '../lib/recording'
-import { describeTranslation, isTranslationPending } from '../lib/transcript'
 import type { LogMessage } from '../lib/types'
 import './LiveSessionPage.css'
 
@@ -178,12 +178,7 @@ function LiveSessionPageContent({ session, sessionId }: { session: Session; sess
           <span>Translation</span>
         </div>
         {transcriptRows.map((row, index) => (
-          <div className="transcript-row" key={index}>
-            <p className="original">{row.original_text}</p>
-            <p className={isTranslationPending(row) ? 'translated pending' : 'translated'}>
-              {describeTranslation(row)}
-            </p>
-          </div>
+          <TranscriptRow key={index} row={row} />
         ))}
         {partialTranscript && <p className="partial">{partialTranscript}</p>}
       </div>
