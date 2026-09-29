@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { NewSessionModal } from '../components/NewSessionModal'
+import { SessionListRow } from '../components/SessionListRow'
 import { useAuth } from '../hooks/useAuth'
 import { ApiError, listSessions } from '../lib/api'
-import { sessionPath } from '../lib/routes'
-import { appendSessions, formatSessionTitle } from '../lib/sessions'
+import { appendSessions, removeSessionFromList, renameSessionInList } from '../lib/sessions'
 import type { SessionSummary } from '../lib/types'
 import './HomePage.css'
 
@@ -26,6 +26,7 @@ function HomePageContent({ session }: { session: Session }) {
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const loadPage = useCallback(
     async (offset: number, append: boolean) => {
@@ -62,6 +63,19 @@ function HomePageContent({ session }: { session: Session }) {
     loadPage(sessions.length, true)
   }
 
+  const handleRenamed = (id: string, title: string) => {
+    setSessions((current) => renameSessionInList(current, id, title))
+  }
+
+  const handleDeleted = (id: string) => {
+    setSessions((current) => removeSessionFromList(current, id))
+  }
+
+  const handleMissing = (id: string) => {
+    setSessions((current) => removeSessionFromList(current, id))
+    setNotice('That session no longer exists.')
+  }
+
   return (
     <main className="home-page">
       <div className="home-page-header">
@@ -71,6 +85,14 @@ function HomePageContent({ session }: { session: Session }) {
 
       {loading && <p>Loading…</p>}
       {error && <p className="home-page-error">{error}</p>}
+      {notice && (
+        <p className="home-page-notice">
+          {notice}{' '}
+          <button type="button" onClick={() => setNotice(null)}>
+            Dismiss
+          </button>
+        </p>
+      )}
 
       {!loading && !error && sessions.length === 0 && (
         <p className="home-page-empty">No sessions yet.</p>
@@ -79,19 +101,14 @@ function HomePageContent({ session }: { session: Session }) {
       {sessions.length > 0 && (
         <ul className="session-list">
           {sessions.map((item) => (
-            <li key={item.id} className="session-list-row">
-              <Link to={sessionPath(item.id)} className="session-list-link">
-                <span className="session-list-title">{formatSessionTitle(item)}</span>
-                <span className="session-list-meta">
-                  {new Date(item.created_at).toLocaleString()}
-                  {' · '}
-                  {item.source_language ?? '?'} → {item.target_language ?? '?'}
-                  {' · '}
-                  {item.message_count} message{item.message_count === 1 ? '' : 's'}
-                </span>
-              </Link>
-              {/* Placeholder slot for rename/delete row actions - see KAN-39 */}
-            </li>
+            <SessionListRow
+              key={item.id}
+              session={session}
+              item={item}
+              onRenamed={handleRenamed}
+              onDeleted={handleDeleted}
+              onMissing={handleMissing}
+            />
           ))}
         </ul>
       )}

@@ -16,3 +16,20 @@ export function appendSessions(
 ): SessionSummary[] {
   return [...existing, ...loaded]
 }
+
+// Rename-in-place (KAN-39): a successful PATCH updates just the one row's
+// title, not a refetch of the whole list.
+export function renameSessionInList(
+  sessions: SessionSummary[],
+  id: string,
+  title: string,
+): SessionSummary[] {
+  return sessions.map((s) => (s.id === id ? { ...s, title } : s))
+}
+
+// Shared by both a successful DELETE and a 404 on either rename or delete
+// (the row was removed elsewhere, e.g. another tab) - either way the row no
+// longer belongs in the list, and a refetch isn't needed to know that.
+export function removeSessionFromList(sessions: SessionSummary[], id: string): SessionSummary[] {
+  return sessions.filter((s) => s.id !== id)
+}
