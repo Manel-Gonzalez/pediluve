@@ -99,3 +99,87 @@ async def test_translate_reuses_the_client_across_calls(fake_transport):
     await deepl.translate("hello", "es")
     await deepl.translate("hello again", "es")
     assert deepl._get_client() is deepl._get_client()
+
+
+# ── translate_many ────────────────────────────────────────────────────────
+
+
+async def test_translate_many_returns_translations_in_order(fake_transport):
+    fake_transport.response_json = {"translations": [{"text": "hola"}, {"text": "mundo"}]}
+
+    result = await deepl.translate_many(["hello", "world"], "es")
+
+    assert result == ["hola", "mundo"]
+    assert len(fake_transport.requests) == 1
+
+
+async def test_translate_many_sends_up_to_50_texts_in_one_request(fake_transport):
+    texts = [f"text-{i}" for i in range(50)]
+    fake_transport.response_json = {"translations": [{"text": t} for t in texts]}
+
+    await deepl.translate_many(texts, "es")
+
+    assert len(fake_transport.requests) == 1
+    assert fake_transport.requests[0].content.count(b"text=") == 50
+
+
+async def test_translate_many_chunks_requests_over_50_texts(monkeypatch):
+    texts = [f"text-{i}" for i in range(120)]
+
+    class ChunkingTransport(httpx.AsyncBaseTransport):
+        def __init__(self):
+            self.requests: list[httpx.Request] = []
+
+        async def handle_async_request(self, request):
+            self.requests.append(request)
+            count = request.content.count(b"text=")
+            translations = [{"text": f"t{i}"} for i in range(count)]
+            return httpx.Response(200, json={"translations": translations}, request=request)
+
+    transport = ChunkingTransport()
+    _patch_transport(monkeypatch, transport)
+
+    result = await deepl.translate_many(texts, "es")
+
+    assert [request.content.count(b"text=") for request in transport.requests] == [50, 50, 20]
+    assert len(result) == 120
+
+
+async def test_translate_many_maps_a_failed_chunk_to_nones(monkeypatch):
+    texts = [f"text-{i}" for i in range(60)]
+
+    class FailingSecondChunkTransport(httpx.AsyncBaseTransport):
+        def __init__(self):
+            self.requests: list[httpx.Request] = []
+
+        async def handle_async_request(self, request):
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                count = request.content.count(b"text=")
+                translations = [{"text": f"ok-{i}"} for i in range(count)]
+                return httpx.Response(200, json={"translations": translations}, request=request)
+            return httpx.Response(456, json={"message": "Quota exceeded"}, request=request)
+
+    transport = FailingSecondChunkTransport()
+    _patch_transport(monkeypatch, transport)
+
+    result = await deepl.translate_many(texts, "es")
+
+    assert result[:50] == [f"ok-{i}" for i in range(50)]
+    assert result[50:] == [None] * 10
+
+
+async def test_translate_many_with_no_texts_returns_an_empty_list_and_does_not_call_deepl(fake_transport):
+    result = await deepl.translate_many([], "es")
+
+    assert result == []
+    assert fake_transport.requests == []
+
+
+async def test_translate_many_reuses_the_ui_language_code_mapping(fake_transport):
+    fake_transport.response_json = {"translations": [{"text": "hi"}]}
+
+    await deepl.translate_many(["hello"], "en")
+
+    sent = fake_transport.requests[0]
+    assert b"target_lang=EN-US" in sent.content
