@@ -152,9 +152,9 @@ async def test_create_session_inserts_a_row_with_the_owner_and_returns_its_id(fa
     assert row["user_id"] == "user-1"
 
 
-async def test_create_session_uses_the_placeholder_target_language_by_default(fake_client):
+async def test_create_session_defaults_target_language_to_none(fake_client):
     await supabase.create_session(user())
-    assert fake_client.store["sessions"][0]["target_language"] == supabase.DEFAULT_TARGET_LANGUAGE
+    assert fake_client.store["sessions"][0]["target_language"] is None
 
 
 async def test_create_session_accepts_an_explicit_target_language(fake_client):

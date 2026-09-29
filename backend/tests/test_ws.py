@@ -52,7 +52,7 @@ def fake_supabase(monkeypatch):
     state = {"sessions": {}, "messages": []}
     counter = {"n": 0}
 
-    async def fake_create_session(user, source_language=None, target_language="en"):
+    async def fake_create_session(user, source_language=None, target_language=None):
         counter["n"] += 1
         session_id = f"session-{counter['n']}"
         state["sessions"][session_id] = {
@@ -985,7 +985,7 @@ def test_set_target_language_updates_the_persisted_session_mid_recording(
     with authenticated_ws() as ws:
         ws.send_json({"type": "start_transcription"})
         session_id = next(iter(fake_supabase["sessions"]))
-        assert fake_supabase["sessions"][session_id]["target_language"] == "en"
+        assert fake_supabase["sessions"][session_id]["target_language"] is None
 
         ws.send_json({"type": "set_target_language", "target_language": "de"})
         ws.send_json({"type": "stop_transcription"})

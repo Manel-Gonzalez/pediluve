@@ -243,7 +243,7 @@ class ConnectionHandler:
             self.db_session_id = await supabase.create_session(
                 self.user,
                 source_language=self.source_language,
-                target_language=self.target_language or supabase.DEFAULT_TARGET_LANGUAGE,
+                target_language=self.target_language,
             )
         except Exception:
             logger.exception("Could not create Supabase session")

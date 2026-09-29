@@ -77,6 +77,18 @@ non-null for that session, not just read `sessions.target_language`, to know
 whether translation was ever actually used. Consider making the column nullable
 at that point instead of carrying the placeholder further.
 
+**Resolved in Phase 4 (KAN-22):** `supabase/migrations/004_nullable_target_language.sql`
+drops the `not null` constraint, and `create_session()` no longer substitutes
+`DEFAULT_TARGET_LANGUAGE` when none was chosen - it now writes `NULL`
+directly, matching what `ConnectionHandler.target_language` (`None`) actually
+meant the whole time. `DEFAULT_TARGET_LANGUAGE` itself was removed as dead
+code (its only two call sites, `create_session()`'s own default and the
+`_start_transcription` call passing it, both went away with this fix). No
+backfill: existing rows with the old `"en"` placeholder keep it, harmlessly -
+they still correctly have no translated messages either way, per the
+"a future reader must not trust `sessions.target_language` alone" note above,
+which still holds for those specific pre-existing rows.
+
 **Also unverified (same network restriction):** whether DeepL's `/v2/translate`
 actually supports `CA` (Catalan) as a `target_lang` — `services/deepl.py`'s
 `_TARGET_LANGUAGE_CODES` maps it optimistically. If DeepL rejects it, `translate()`
