@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getWebSocketUrl } from '../lib/api'
+import { buildSetTargetLanguageMessage, buildStartTranscriptionMessage } from '../lib/languageControls'
 import type { LogMessage, ServerMessage } from '../lib/types'
 
 type ConnectionStatus = 'connecting' | 'open' | 'closed'
@@ -10,6 +11,7 @@ export function useWebSocket() {
   const [messages, setMessages] = useState<LogMessage[]>([])
   const [partialTranscript, setPartialTranscript] = useState('')
   const [transcriptLines, setTranscriptLines] = useState<string[]>([])
+  const [targetLanguage, setTargetLanguageState] = useState<string | null>(null)
 
   useEffect(() => {
     const socket = new WebSocket(getWebSocketUrl())
@@ -40,32 +42,55 @@ export function useWebSocket() {
     return () => socket.close()
   }, [])
 
-  const sendMessage = useCallback((text: string) => {
-    socketRef.current?.send(JSON.stringify({ type: 'message', text }))
+  // A socket that isn't OPEN yet (still connecting) throws on send(); one that's
+  // already closing/closed just needs to be skipped. Every outgoing message goes
+  // through this guard rather than calling socketRef.current.send() directly.
+  const sendJson = useCallback((payload: unknown) => {
+    if (socketRef.current?.readyState !== WebSocket.OPEN) return
+    socketRef.current.send(JSON.stringify(payload))
   }, [])
+
+  const sendMessage = useCallback(
+    (text: string) => {
+      sendJson({ type: 'message', text })
+    },
+    [sendJson],
+  )
 
   const sendAudioChunk = useCallback((chunk: ArrayBuffer) => {
-    socketRef.current?.send(chunk)
+    if (socketRef.current?.readyState !== WebSocket.OPEN) return
+    socketRef.current.send(chunk)
   }, [])
 
-  const startTranscription = useCallback((sampleRate: number) => {
-    socketRef.current?.send(
-      JSON.stringify({ type: 'start_transcription', audio_format: `pcm_${sampleRate}` }),
-    )
-  }, [])
+  const startTranscription = useCallback(
+    (sampleRate: number, sourceLanguage: string | null) => {
+      sendJson(buildStartTranscriptionMessage(`pcm_${sampleRate}`, sourceLanguage))
+    },
+    [sendJson],
+  )
 
   const stopTranscription = useCallback(() => {
-    socketRef.current?.send(JSON.stringify({ type: 'stop_transcription' }))
-  }, [])
+    sendJson({ type: 'stop_transcription' })
+  }, [sendJson])
+
+  const setTargetLanguage = useCallback(
+    (language: string) => {
+      setTargetLanguageState(language)
+      sendJson(buildSetTargetLanguageMessage(language))
+    },
+    [sendJson],
+  )
 
   return {
     status,
     messages,
     partialTranscript,
     transcriptLines,
+    targetLanguage,
     sendMessage,
     sendAudioChunk,
     startTranscription,
     stopTranscription,
+    setTargetLanguage,
   }
 }
