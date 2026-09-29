@@ -6,6 +6,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
 from models.messages import (
+    Authenticate,
+    Authenticated,
     ClientMessage,
     EchoMessage,
     ErrorMessage,
@@ -15,7 +17,14 @@ from models.messages import (
     Transcript,
 )
 from services import deepl, supabase
+from services.auth import AuthenticatedUser, AuthError, AuthServiceUnavailable, verify_access_token
 from services.elevenlabs import RealtimeTranscriptionSession
+
+AUTH_REQUIRED_CLOSE_CODE = 4401
+# Distinct from AUTH_REQUIRED_CLOSE_CODE: the token wasn't necessarily bad,
+# Supabase Auth just couldn't be reached - a client should retry, not treat
+# this like an invalid session and force a re-login (see services/auth.py).
+AUTH_SERVICE_UNAVAILABLE_CLOSE_CODE = 4503
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +35,8 @@ class ConnectionHandler:
     def __init__(self, websocket: WebSocket) -> None:
         self.websocket = websocket
         self.send_lock = asyncio.Lock()
+        self.user: AuthenticatedUser | None = None
+        self._closed = False
         self.stt_session: RealtimeTranscriptionSession | None = None
         self.relay_task: asyncio.Task | None = None
         self.db_session_id: str | None = None
@@ -56,6 +67,9 @@ class ConnectionHandler:
                     break
 
                 if message.get("bytes") is not None:
+                    if self.user is None:
+                        await self._reject("Authentication required")
+                        break
                     if self.stt_session is not None:
                         await self.stt_session.send_audio(message["bytes"])
                     continue
@@ -64,19 +78,75 @@ class ConnectionHandler:
                     continue
 
                 await self._handle_text_message(message["text"])
+                if self._closed:
+                    break
         except WebSocketDisconnect:
             logger.info("Client disconnected")
         finally:
             await self._cleanup()
 
+    async def _reject(self, message: str, code: int = AUTH_REQUIRED_CLOSE_CODE) -> None:
+        # send() (which self.send() also uses) and close() share send_lock so
+        # they run as one atomic unit - otherwise a concurrent background send
+        # (the transcript worker, the relay task) could interleave between
+        # this error message and the close.
+        async with self.send_lock:
+            await self.websocket.send_json(ErrorMessage(message=message).model_dump())
+            await self.websocket.close(code=code)
+        self._closed = True
+
+    async def _authenticate(self, data: dict) -> None:
+        try:
+            request = Authenticate.model_validate(data)
+        except ValidationError as exc:
+            await self._reject(f"Invalid message: {exc}")
+            return
+
+        try:
+            authenticated_user = await verify_access_token(request.access_token)
+        except AuthError:
+            await self._reject("Invalid or expired access token")
+            return
+        except AuthServiceUnavailable:
+            await self._reject(
+                "Authentication service unavailable", code=AUTH_SERVICE_UNAVAILABLE_CLOSE_CODE
+            )
+            return
+
+        if self.user is not None and self.user.id != authenticated_user.id:
+            await self._reject("Cannot re-authenticate as a different user")
+            return
+
+        # Re-authenticating as the same user (e.g. a refreshed Supabase access
+        # token) swaps the stored user in place - later calls read self.user
+        # fresh rather than a value captured earlier, so an in-flight
+        # save/update picks up the new token if it hasn't reached Supabase yet.
+        self.user = authenticated_user
+        await self.send(Authenticated(user_id=authenticated_user.id).model_dump())
+
     async def _handle_text_message(self, raw: str) -> None:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
-            await self.send(ErrorMessage(message=f"Invalid message: {exc}").model_dump())
+            # Unauthenticated + garbage input closes like any other non-
+            # "authenticate" first message, instead of leaving an
+            # unauthenticated socket open indefinitely for a peer that never
+            # sends valid JSON.
+            if self.user is None:
+                await self._reject(f"Invalid message: {exc}")
+            else:
+                await self.send(ErrorMessage(message=f"Invalid message: {exc}").model_dump())
             return
 
         msg_type = data.get("type")
+
+        if msg_type == "authenticate":
+            await self._authenticate(data)
+            return
+
+        if self.user is None:
+            await self._reject("Authentication required")
+            return
 
         if msg_type == "message":
             try:
@@ -146,6 +216,7 @@ class ConnectionHandler:
         self.sequence = 0
         try:
             self.db_session_id = await supabase.create_session(
+                self.user,
                 source_language=self.source_language,
                 target_language=self.target_language or supabase.DEFAULT_TARGET_LANGUAGE,
             )
@@ -212,30 +283,45 @@ class ConnectionHandler:
             except Exception:
                 logger.exception("Could not translate transcript")
 
-        await self.send(
-            Transcript(
-                original_text=text,
-                translated_text=translated_text,
-                target_language=target_language,
-            ).model_dump()
-        )
-        if self.db_session_id is None:
-            return
+        if self.db_session_id is not None:
+            try:
+                # self.user read here, not captured earlier in this method - if a
+                # re-authenticate swapped it while the DeepL call above was in
+                # flight, this save uses the new token, per KAN-18.
+                await supabase.save_message(
+                    self.user,
+                    self.db_session_id,
+                    self.sequence,
+                    text,
+                    translated_text=translated_text,
+                    target_language=target_language,
+                )
+                self.sequence += 1
+            except Exception:
+                logger.exception("Could not save message to Supabase")
+
+        # Persisted before sending, not after: on a real disconnect, send()
+        # raises WebSocketDisconnect once the socket write actually fails,
+        # which must not skip (or, if unguarded, wipe out via an uncaught
+        # exception) the save above - the disconnect/cancellation-shielded
+        # cleanup path this now runs under exists precisely to still persist
+        # a committed transcript the client will never see.
         try:
-            await supabase.save_message(
-                self.db_session_id,
-                self.sequence,
-                text,
-                translated_text=translated_text,
-                target_language=target_language,
+            await self.send(
+                Transcript(
+                    original_text=text,
+                    translated_text=translated_text,
+                    target_language=target_language,
+                ).model_dump()
             )
-            self.sequence += 1
-        except Exception:
-            logger.exception("Could not save message to Supabase")
+        except WebSocketDisconnect:
+            pass
 
     async def _persist_target_language(self, session_id: str, target_language: str) -> None:
         try:
-            await supabase.update_session_target_language(session_id, target_language)
+            # self.user, not a captured value: same reasoning as save_message
+            # above - use whatever token is current when this actually runs.
+            await supabase.update_session_target_language(self.user, session_id, target_language)
         except Exception:
             logger.exception("Could not update session target language")
 
@@ -243,19 +329,35 @@ class ConnectionHandler:
         if self.db_session_id is None:
             return
         try:
-            await supabase.end_session(self.db_session_id)
+            await supabase.end_session(self.user, self.db_session_id)
         except Exception:
             logger.exception("Could not end Supabase session")
         self.db_session_id = None
 
     async def _cleanup(self) -> None:
-        if self.stt_session is not None:
-            await self.stt_session.close()
-        if self.relay_task is not None:
-            self.relay_task.cancel()
-        if self.transcript_worker_task is not None:
-            self.transcript_worker_task.cancel()
-        await self._end_db_session()
+        # Same graceful wind-down as an explicit stop_transcription: closing
+        # the connection (disconnect, an auth rejection) must not cancel a
+        # committed transcript that's already mid-translate/mid-save. Merely
+        # cancelling the relay/worker tasks here (the previous behavior)
+        # silently dropped whatever was still in flight.
+        #
+        # run() is itself cancelled the moment the connection closes (a real
+        # client disconnect delivers "websocket.disconnect" and lets the app
+        # keep running, but the ASGI test client's teardown cancels the whole
+        # app task right after sending it) - so plain `await
+        # self._stop_transcription()` here would itself get cut short.
+        # asyncio.shield() decouples _stop_transcription from that
+        # cancellation; the loop re-awaits it if our own await-of-the-shield
+        # is what got cancelled, only letting a cancellation through once
+        # _stop_transcription has actually finished.
+        cleanup_task = asyncio.ensure_future(self._stop_transcription())
+        while True:
+            try:
+                await asyncio.shield(cleanup_task)
+                return
+            except asyncio.CancelledError:
+                if cleanup_task.done():
+                    raise
 
 
 @router.websocket("/ws")

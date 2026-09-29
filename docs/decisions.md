@@ -85,6 +85,100 @@ failure (logged, `translated_text` stays null) rather than a crash — so this d
 block KAN-5, but Catalan-target translation may not actually work until confirmed
 against DeepL's real supported-language list.
 
+## Phase reorder: user accounts (auth) inserted as Phase 3, before sessions list
+
+**Context:** the original phase gates (Phase 0-5) never included authentication — the app was
+single-user and local. While scoping the sessions-list feature, Manel decided he wants per-user
+accounts ("each user can view their own past sessions"), reversing the earlier "don't add auth"
+rule in `CLAUDE.md`.
+
+**Why auth has to come before the sessions list, not after:** "list of my past sessions" only
+means something once there is a concept of "my" — retrofitting `user_id` onto sessions after
+building an account-agnostic list page would mean redoing the list/detail views' data-fetching
+once auth lands. Doing it in the other order avoids that rework.
+
+**Chosen for auth:** Supabase Auth, email + password. **Alternatives considered:** magic link
+(no password to manage, but adds a dependency on email deliverability being fast enough to not
+annoy a solo dev testing login repeatedly), Google OAuth (nicer UX for a portfolio demo, but needs
+OAuth credentials set up in Google Cloud before any code can be written — extra setup cost for a
+single-user-per-account app with no real "who are you" stakes).
+
+**Chosen for routing:** React Router. Each session gets its own URL so a reload
+or crash returns to that session, not to the home/list view — the alternative (React state only,
+no router) was explicitly rejected because losing your place on a refresh is bad UX for something
+you might have open for a while.
+
+**Amendment (KAN-17): React Router moved from Phase 4 to Phase 3, not Phase 4 as first planned.**
+The original reasoning above (per-session URLs) is still Phase 4's reason for *adding more routes*,
+but it turned out Phase 3 needed *some* router before Phase 4 does: a real login page (`/login`,
+bookmarkable, survives a reload, works with the browser back/forward buttons) and a "protected
+route" guard for everything else are themselves a routing problem, not something worth faking with
+conditional rendering inside a single unrouted `App`. Building that ad hoc in Phase 3 and then
+introducing React Router "for real" in Phase 4 would mean redoing the login/guard logic as real
+routes at that point anyway. Pulling the dependency forward once, in Phase 3, means Phase 4 only
+ever adds routes to a router that already exists (`RequireAuth` as a layout route, `pages/` as the
+established location) instead of introducing routing from scratch a phase later.
+
+**Revisit:** RLS is currently disabled site-wide (`supabase/migrations/001_initial.sql` says so
+explicitly, anticipating this exact moment) — Phase 3 must turn it on and add policies scoping
+`sessions`/`messages` to `auth.uid()`, not just add a `user_id` column and trust the backend to
+filter correctly on every query.
+
+## Auth: supabase-js on the client, JWT verification + RLS via user token on the backend
+
+**No custom auth endpoints.** The backend has no `/login`/`/register`/`/logout` routes of its own.
+The frontend talks to Supabase Auth directly via `supabase-js` (`signUp`/`signInWithPassword`/
+`signOut`, `hooks/useAuth.tsx`); the backend only ever receives an already-issued access token (the
+WebSocket `authenticate` message, or the `Authorization` header on `GET /me`) and verifies it.
+**Why:** Supabase Auth already handles password hashing, session issuance, refresh tokens, and
+email-confirmation delivery — reimplementing any slice of that server-side would be pure duplicated
+risk (a self-rolled auth endpoint is exactly the kind of thing that quietly gets the edge cases
+wrong) for zero benefit over using the already-battle-tested client library directly.
+
+**Anon key + per-request user JWT, never the service-role key.** `services/supabase.py::client_for()`
+builds a fresh Postgrest client per call using the `anon` key, then explicitly authenticates it as
+the calling user (`client.postgrest.auth(access_token)`) — every DB read/write runs as that user, so
+Postgres' Row Level Security (`auth.uid()` policies, `supabase/migrations/003_auth_and_rls.sql`) is
+the actual enforcement boundary, not application-level filtering. The service-role key (which
+bypasses RLS entirely) is never used anywhere in this app. **Why:** defense in depth — even a bug in
+the backend's own authorization logic can't leak another user's rows, because Postgres itself
+refuses to return them.
+
+**`get_user()` (a Supabase round-trip) over local JWT verification.** `services/auth.py::verify_access_token()`
+calls Supabase Auth's `get_user(token)` rather than verifying the JWT's signature locally (which
+would need the project's JWT signing secret held in the backend's own `.env`). **Why:** an
+authoritative, instantly-revocation-aware check (a banned/deleted user's token stops working
+immediately, not just at its natural expiry) with one fewer sensitive credential for the backend to
+hold and rotate. The extra network hop's latency is negligible for a single WebSocket handshake and
+one `/me` call, not a high-QPS API.
+
+**Token sent as the first WebSocket message, not a `?token=` query param; distinct close codes.**
+`/ws` requires an `{"type": "authenticate", "access_token": ...}` message before anything else, and
+closes with **4401** on a bad/expired token or **4503** if Supabase Auth itself is unreachable.
+**Why not a query param:** query strings end up in server access logs, some proxies, and browser
+history — a message sent over an already-established connection doesn't. **Why two close codes, not
+one:** a future frontend can tell "your session is invalid, log in again" (4401) apart from "retry
+shortly, this isn't your fault" (4503) instead of treating every rejection as a forced logout.
+
+**Token-refresh handling.** Supabase silently mints a new access token in the background before the
+old one expires and fires `TOKEN_REFRESHED` via `onAuthStateChange`. Rather than reconnecting the
+WebSocket on every refresh (which would interrupt an in-progress recording), the frontend re-sends
+`authenticate` with the fresh token over the *same* open connection; the backend's `_authenticate`
+handler explicitly supports re-authenticating as the same user in place (only a different user is
+rejected). This is also directly exercised by KAN-18/KAN-19's acceptance criteria: a recording still
+running past the JWT's expiry must keep persisting, not silently start dropping messages.
+
+**Legacy (pre-auth) rows deleted, not migrated.** `003_auth_and_rls.sql` deletes every `sessions` row
+with no `user_id` (cascading to `messages`) before making the column `NOT NULL`. **Why:** those rows
+predate the concept of "user" entirely (Phase 0-2 manual/echo/STT-smoke-test sessions) — there is no
+real owner to attribute them to, and inventing a migration path for ownerless data has no value here.
+
+**Password reset: deferred, not built.** Supabase Auth supports `resetPasswordForEmail` plus a
+redirect-based reset page, but that needs an email template and a dedicated page — extra surface
+area with no payoff yet for a single-developer local project where the developer already knows their
+own password. Straightforward to add later using supabase-js's existing support if this ever needs
+more than one real user.
+
 ## Persistence: Supabase over local SQLite
 
 **Chosen:** Supabase (hosted PostgreSQL)

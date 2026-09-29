@@ -1,0 +1,29 @@
+import { describe, expect, it } from 'vitest'
+import { buildAuthenticateMessage, describeConnectionStatus } from './auth'
+
+describe('buildAuthenticateMessage', () => {
+  it('builds the authenticate message shape', () => {
+    expect(buildAuthenticateMessage('token-123')).toEqual({
+      type: 'authenticate',
+      access_token: 'token-123',
+    })
+  })
+})
+
+describe('describeConnectionStatus', () => {
+  it('reports connecting as-is', () => {
+    expect(describeConnectionStatus('connecting', false)).toBe('connecting')
+  })
+
+  it('reports open as-is before the authenticate handshake completes', () => {
+    expect(describeConnectionStatus('open', false)).toBe('open')
+  })
+
+  it('reports authenticated once open and the handshake has completed', () => {
+    expect(describeConnectionStatus('open', true)).toBe('authenticated')
+  })
+
+  it('reports closed regardless of a stale isAuthenticated value', () => {
+    expect(describeConnectionStatus('closed', true)).toBe('closed')
+  })
+})

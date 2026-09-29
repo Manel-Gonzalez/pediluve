@@ -4,6 +4,7 @@ websockets
 pydantic
 python-dotenv
 supabase
+supabase-auth
 httpx
 pytest
 pytest-asyncio
