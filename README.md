@@ -171,8 +171,8 @@ the command.
    the mic works from any device, and the QR code carries that URL automatically.
 
 While the tunnel is up, anyone with the URL can reach the app, and sign-up is open while ElevenLabs
-and DeepL are paid per use. Before a demo, turn off **Authentication → Sign In / Providers → Allow
-new users to sign up** in Supabase. Stop the tunnel (Ctrl+C) as soon as the demo is over.
+and DeepL are paid per use. Before a demo, turn off Supabase's **"Allow new users to sign
+up"** setting (under Authentication). Stop the tunnel (Ctrl+C) as soon as the demo is over.
 
 ## Decisions log
 
