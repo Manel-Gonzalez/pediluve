@@ -79,6 +79,10 @@ class ConnectionHandler:
         # a fast second change can't be clobbered by a slower first one that
         # finishes later (see _retranslate_committed_texts).
         self._retranslation_generation = 0
+        # Whether the current sentence has started (a non-empty partial) and
+        # not yet been committed - drives the viewers' "speaking" indicator
+        # (KAN-65).
+        self._speaking = False
 
     async def send(self, payload: dict) -> None:
         async with self.send_lock:
@@ -386,25 +390,28 @@ class ConnectionHandler:
         self.relay_task = None
         self.transcript_queue = None
         self.transcript_worker_task = None
+        # A sentence cut off by the pause never gets its commit.
+        self._speaking = False
 
         if self.live_room is not None:
+            self.live_room.publish_speaking(False)
             await self.live_room.broadcast_status("paused")
 
     async def _relay_transcripts(self, session: RealtimeTranscriptionSession) -> None:
         async for event in session.events():
             event_type = event.get("message_type")
             if event_type == "partial_transcript":
+                if event["text"].strip() and not self._speaking:
+                    self._speaking = True
+                    if self.live_room is not None:
+                        self.live_room.publish_speaking(True)
                 await self.send(PartialTranscript(text=event["text"]).model_dump())
             elif event_type == "committed_transcript":
-                # ElevenLabs' VAD occasionally commits a segment with no
-                # recognized speech (silence, noise) - an empty or
-                # whitespace-only text rather than skipping the event
-                # entirely. Filtered here, at the source, so it never reaches
-                # the client, spends a DeepL call, or clutters Supabase/the
-                # in-memory retranslation history with a blank row.
-                text = event["text"]
-                if text.strip():
-                    await self.transcript_queue.put(text)
+                # Queued even when empty (see _handle_committed_transcript):
+                # the worker is what lowers the viewers' "speaking" flag, in
+                # order with the lines it publishes.
+                self._speaking = False
+                await self.transcript_queue.put(event["text"])
             elif event_type in ("session_started", "warning", "edited_transcript"):
                 logger.info("ElevenLabs event: %s", event)
             elif "error" in event:
@@ -421,6 +428,26 @@ class ConnectionHandler:
                 self.transcript_queue.task_done()
 
     async def _handle_committed_transcript(self, text: str) -> None:
+        # ElevenLabs' VAD occasionally commits a segment with no recognized
+        # speech (silence, noise) - an empty or whitespace-only text rather
+        # than skipping the event entirely. Dropped here so it never reaches
+        # the client, spends a DeepL call, or clutters Supabase/the in-memory
+        # retranslation history with a blank row.
+        if not text.strip():
+            self._stopped_speaking()
+            return
+        try:
+            await self._handle_spoken_line(text)
+        finally:
+            self._stopped_speaking()
+
+    def _stopped_speaking(self) -> None:
+        # Only if the next sentence hasn't already begun: its partials may
+        # arrive while this line is still being translated.
+        if not self._speaking and self.live_room is not None:
+            self.live_room.publish_speaking(False)
+
+    async def _handle_spoken_line(self, text: str) -> None:
         # Tracked regardless of translation outcome, so a later target-language
         # change has the full transcript to retranslate even if this specific
         # line's own translation failed.

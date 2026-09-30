@@ -64,13 +64,20 @@ class LiveRoom:
         self.title = title
         self.source_language = source_language
         self.state = "paused"
+        # Whether the owner is mid-sentence (KAN-65) - viewers only ever see
+        # committed, translated lines, so this is what tells them one is on
+        # its way.
+        self.speaking = False
         self.lines: list[RoomLine] = []
         # id -> (viewer, target_language); a plain incrementing id rather
         # than the viewer object itself as the key, so add/remove/update are
         # all simple dict operations without requiring Viewer to be hashable.
         self.viewers: dict[int, tuple[Viewer, str]] = {}
         self.refcount = 0
-        self._queue: asyncio.Queue[tuple[str, str | None, str | None, str | None]] = asyncio.Queue()
+        # Lines and speaking updates share one queue so they reach viewers
+        # in the order the owner produced them: ("line", args) or
+        # ("speaking", bool).
+        self._queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
         self._worker_task: asyncio.Task | None = None
         self._next_viewer_id = 0
         # The live owner connection's own AuthenticatedUser, kept current by
@@ -121,20 +128,21 @@ class LiveRoom:
 
     async def broadcast_status(self, state: str) -> None:
         # Unlike publish(), this never involves DeepL, so it's cheap enough
-        # to send directly rather than going through the queue - but still
-        # per-viewer timeout-guarded, same reasoning as _broadcast_line.
+        # to send directly rather than going through the queue.
         self.state = state
+        await self._broadcast({"type": "live_status", "state": state}, "live_status")
+
+    async def _broadcast(self, payload: dict, label: str) -> None:
+        # The same message to every viewer, each send timeout-guarded like
+        # _broadcast_line: one slow viewer never holds up the rest.
         if not self.viewers:
             return
 
         async def _send_to(viewer: Viewer) -> None:
             try:
-                await asyncio.wait_for(
-                    viewer.send({"type": "live_status", "state": state}),
-                    timeout=_SEND_TIMEOUT_SECONDS,
-                )
+                await asyncio.wait_for(viewer.send(payload), timeout=_SEND_TIMEOUT_SECONDS)
             except Exception:
-                logger.warning("Dropped a live_status send to a slow or failed viewer")
+                logger.warning("Dropped a %s send to a slow or failed viewer", label)
 
         await asyncio.gather(*(_send_to(viewer) for viewer, _ in self.viewers.values()))
 
@@ -149,21 +157,31 @@ class LiveRoom:
         # transcript path, which must not be slowed by viewer translation
         # calls or viewer socket I/O. message_id may be the owner's still-
         # running save (KAN-65) rather than an id - see RoomLine.
-        self._queue.put_nowait((original_text, owner_target_language, owner_translated_text, message_id))
+        self._queue.put_nowait(("line", (original_text, owner_target_language, owner_translated_text, message_id)))
+
+    def publish_speaking(self, speaking: bool) -> None:
+        # Queued rather than sent directly (unlike broadcast_status) so a
+        # "stopped speaking" can never overtake the line it belongs to.
+        self._queue.put_nowait(("speaking", speaking))
 
     async def _run_worker(self) -> None:
         while True:
-            original_text, owner_target_language, owner_translated_text, message_id = (
-                await self._queue.get()
-            )
+            kind, payload = await self._queue.get()
             try:
-                await self._publish_one(
-                    original_text, owner_target_language, owner_translated_text, message_id
-                )
+                if kind == "speaking":
+                    await self._set_speaking(payload)
+                else:
+                    await self._publish_one(*payload)
             except Exception:
-                logger.exception("Could not publish a line to live room %s", self.session_id)
+                logger.exception("Could not publish a %s update to live room %s", kind, self.session_id)
             finally:
                 self._queue.task_done()
+
+    async def _set_speaking(self, speaking: bool) -> None:
+        if speaking == self.speaking:
+            return
+        self.speaking = speaking
+        await self._broadcast({"type": "live_speaking", "speaking": speaking}, "live_speaking")
 
     async def _publish_one(
         self,

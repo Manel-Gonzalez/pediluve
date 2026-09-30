@@ -42,6 +42,8 @@ class LiveJoined(BaseModel):
     source_language: str | None
     target_language: str
     state: str
+    # Whether the owner is mid-sentence right now (KAN-65) - see LiveSpeaking.
+    speaking: bool
     lines: list[LiveLineOut]
 
 
@@ -65,6 +67,15 @@ class LiveLinesRetranslated(BaseModel):
 class LiveStatus(BaseModel):
     type: Literal["live_status"] = "live_status"
     state: str
+
+
+class LiveSpeaking(BaseModel):
+    # KAN-65: the owner started a sentence (true) or it was committed, turned
+    # out to be noise, or recording paused (false). Viewers only see
+    # committed lines, so this is their cue that one is on its way. Sent
+    # only on a change, in order with live_line (services/live_rooms.py).
+    type: Literal["live_speaking"] = "live_speaking"
+    speaking: bool
 
 
 class AudioReady(BaseModel):

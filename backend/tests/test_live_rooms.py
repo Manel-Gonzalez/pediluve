@@ -358,3 +358,44 @@ async def test_registry_release_stops_worker_and_drops_room_at_zero_refcount():
 async def test_registry_release_of_unknown_token_is_a_no_op():
     registry = LiveRoomRegistry()
     await registry.release("does-not-exist")
+
+
+async def test_speaking_is_broadcast_only_when_it_changes():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    viewer = FakeViewer()
+    room.add_viewer(viewer, "fr")
+    room.start_worker()
+
+    room.publish_speaking(True)
+    room.publish_speaking(True)
+    room.publish_speaking(False)
+    room.publish_speaking(False)
+    await _drain(room)
+    await room.stop_worker()
+
+    assert viewer.received == [
+        {"type": "live_speaking", "speaking": True},
+        {"type": "live_speaking", "speaking": False},
+    ]
+    assert room.speaking is False
+
+
+async def test_speaking_updates_stay_in_order_with_lines():
+    # "Stopped speaking" must never overtake the line it belongs to, or the
+    # viewer's bubble would vanish before the line shows up.
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    viewer = FakeViewer()
+    room.add_viewer(viewer, "fr")
+    room.start_worker()
+
+    room.publish_speaking(True)
+    room.publish("hola", None, None)
+    room.publish_speaking(False)
+    await _drain(room)
+    await room.stop_worker()
+
+    assert [(m["type"], m.get("speaking")) for m in viewer.received] == [
+        ("live_speaking", True),
+        ("live_line", None),
+        ("live_speaking", False),
+    ]

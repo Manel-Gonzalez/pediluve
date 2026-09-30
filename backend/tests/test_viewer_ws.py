@@ -74,8 +74,17 @@ def test_join_live_with_a_known_token_returns_room_state_and_lines():
             "source_language": "en",
             "target_language": "fr",
             "state": "paused",
+            "speaking": False,
             "lines": [{"index": 0, "original_text": "hola", "translated_text": "salut"}],
         }
+
+
+def test_join_live_mid_sentence_reports_that_the_owner_is_speaking():
+    share_token, room = _make_room()
+    room.speaking = True
+
+    with _joined_viewer(share_token, "fr") as (_ws, joined):
+        assert joined["speaking"] is True
 
 
 def test_join_live_translates_missing_lines_for_the_requested_language():
