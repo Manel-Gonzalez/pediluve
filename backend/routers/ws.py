@@ -297,6 +297,7 @@ class ConnectionHandler:
             source_language=row["source_language"],
         )
         self.live_room.owner_user = self.user
+        self.live_room.seed_history(messages)
 
         await self.send(
             SessionJoined(

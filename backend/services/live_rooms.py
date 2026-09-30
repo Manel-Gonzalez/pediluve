@@ -75,6 +75,28 @@ class LiveRoom:
     def set_status(self, state: str) -> None:
         self.state = state
 
+    def seed_history(self, messages: list[dict]) -> None:
+        # A room is created empty on the first owner join_session, but the
+        # session may already have stored messages - earlier takes, or a
+        # previous owner connection whose room died with a backend restart
+        # or a page reload. Without this a viewer (or one refreshing its
+        # page) would only ever see lines said since this room was created,
+        # while the owner's own view shows the whole history. `messages` is
+        # the owner's own RLS-scoped join_session read, so viewers still
+        # never touch Postgres (D3). Only on a still-empty room: a second
+        # owner tab joining an already-live room must not append it twice.
+        if self.lines:
+            return
+        for message in messages:
+            line = RoomLine(
+                index=len(self.lines),
+                original_text=message["original_text"],
+                message_id=message.get("id"),
+            )
+            if message.get("target_language") is not None:
+                line.translations[message["target_language"]] = message.get("translated_text")
+            self.lines.append(line)
+
     async def broadcast_status(self, state: str) -> None:
         # Unlike publish(), this never involves DeepL, so it's cheap enough
         # to send directly rather than going through the queue - but still

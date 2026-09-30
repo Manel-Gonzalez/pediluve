@@ -192,6 +192,47 @@ def test_snapshot_returns_lines_in_a_given_language():
     ]
 
 
+def test_seed_history_loads_stored_messages_as_lines():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+
+    room.seed_history(
+        [
+            {"id": "m1", "original_text": "hola", "translated_text": "hello", "target_language": "en"},
+            {"id": "m2", "original_text": "mundo", "translated_text": None, "target_language": None},
+        ]
+    )
+
+    assert [line.index for line in room.lines] == [0, 1]
+    assert room.lines[0].original_text == "hola"
+    assert room.lines[0].translations == {"en": "hello"}
+    assert room.lines[0].message_id == "m1"
+    assert room.lines[1].translations == {}
+    assert room.snapshot("en")[0]["translated_text"] == "hello"
+
+
+def test_seed_history_is_a_no_op_on_a_room_that_already_has_lines():
+    # A second owner connection (another tab) joining an already-live room
+    # must not append the stored history a second time.
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    room.seed_history([{"id": "m1", "original_text": "hola", "translated_text": None, "target_language": None}])
+
+    room.seed_history([{"id": "m1", "original_text": "hola", "translated_text": None, "target_language": None}])
+
+    assert len(room.lines) == 1
+
+
+async def test_lines_published_after_seeding_continue_the_index():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    room.seed_history([{"id": "m1", "original_text": "hola", "translated_text": None, "target_language": None}])
+    room.start_worker()
+
+    room.publish("mundo", None, None)
+    await _drain(room)
+    await room.stop_worker()
+
+    assert [line.index for line in room.lines] == [0, 1]
+
+
 async def test_broadcast_status_updates_state_and_notifies_viewers():
     room = LiveRoom(session_id="s1", title=None, source_language=None)
     viewer = FakeViewer()

@@ -1540,3 +1540,40 @@ def test_end_to_end_a_real_viewer_socket_receives_the_owners_committed_transcrip
     # (the "ended" broadcast on owner disconnect is covered separately by
     # test_disconnect_broadcasts_ended_status_and_releases_the_room, which
     # doesn't need to juggle two real sockets' close ordering to observe it)
+
+
+def test_a_viewer_joining_mid_session_sees_the_sessions_stored_history(monkeypatch, fake_supabase):
+    # Real-test bug: the room started empty on every owner join, so a viewer
+    # refreshing its page (or joining after a backend restart/owner reload)
+    # only saw lines said since that room was created - never the history
+    # the owner's own screen shows from the DB.
+    async def fake_translate_many(texts, target_language):
+        return [f"[{target_language}] {text}" for text in texts]
+
+    monkeypatch.setattr("routers.ws.deepl.translate_many", fake_translate_many)
+
+    session_id = fake_supabase.seed_session(
+        target_language="es",
+        messages=[
+            {"original_text": "hello", "translated_text": "hola", "target_language": "es"},
+            {"original_text": "world", "translated_text": "mundo", "target_language": "es"},
+        ],
+    )
+
+    with _authenticated_connection() as owner_ws:
+        owner_ws.send_json({"type": "join_session", "session_id": session_id})
+        share_token = owner_ws.receive_json()["share_token"]
+
+        with client.websocket_connect("/ws/view") as viewer_ws:
+            viewer_ws.send_json({"type": "join_live", "share_token": share_token, "target_language": "es"})
+            joined = viewer_ws.receive_json()
+            assert joined["lines"] == [
+                {"index": 0, "original_text": "hello", "translated_text": "hola"},
+                {"index": 1, "original_text": "world", "translated_text": "mundo"},
+            ]
+
+        # A different language than the one stored: filled on demand.
+        with client.websocket_connect("/ws/view") as viewer_ws:
+            viewer_ws.send_json({"type": "join_live", "share_token": share_token, "target_language": "fr"})
+            joined = viewer_ws.receive_json()
+            assert [line["translated_text"] for line in joined["lines"]] == ["[fr] hello", "[fr] world"]
