@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildLiveTranscriptText, liveTranscriptFilename } from './liveTranscript'
+import { buildLiveTranscriptText } from './liveTranscript'
 import type { LiveLineData } from './types'
 
 function line(overrides: Partial<LiveLineData> = {}): LiveLineData {
@@ -27,15 +27,5 @@ describe('buildLiveTranscriptText', () => {
 
   it('returns an empty string when nothing is translated yet', () => {
     expect(buildLiveTranscriptText([line({ translated_text: null })])).toBe('')
-  })
-})
-
-describe('liveTranscriptFilename', () => {
-  it('combines the title and target language', () => {
-    expect(liveTranscriptFilename('Standup', 'fr')).toBe('Standup (fr).txt')
-  })
-
-  it('falls back to "session" when there is no title', () => {
-    expect(liveTranscriptFilename(null, 'fr')).toBe('session (fr).txt')
   })
 })

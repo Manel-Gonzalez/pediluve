@@ -6,7 +6,8 @@ import { PlayButton } from '../components/PlayButton'
 import { useAudioPlayer } from '../hooks/useAudioPlayer'
 import { useLiveViewer } from '../hooks/useLiveViewer'
 import { SUPPORTED_LANGUAGES } from '../lib/languageControls'
-import { buildLiveTranscriptText, liveTranscriptFilename } from '../lib/liveTranscript'
+import { saveBlob, transcriptFilename } from '../lib/download'
+import { buildLiveTranscriptText } from '../lib/liveTranscript'
 
 // Anonymous, read-only counterpart to LiveSessionPage (KAN-50) - reached by
 // a QR code/share link, no Supabase session involved at all (see App.tsx:
@@ -69,12 +70,7 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
 
   const handleDownload = () => {
     const blob = new Blob([transcriptText], { type: 'text/plain;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = liveTranscriptFilename(title, targetLanguage)
-    a.click()
-    URL.revokeObjectURL(url)
+    saveBlob(blob, transcriptFilename(title, targetLanguage))
   }
 
   if (joinStatus === 'not_found') {

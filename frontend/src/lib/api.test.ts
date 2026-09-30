@@ -5,6 +5,7 @@ import {
   buildSessionListQuery,
   createSession,
   deleteSession,
+  downloadTranscript,
   getApiUrl,
   getSession,
   getViewerWebSocketUrl,
@@ -125,6 +126,37 @@ describe('apiFetch (via the typed wrappers)', () => {
     await expect(getSession(SESSION, 'x')).rejects.toMatchObject({
       status: 500,
       detail: 'Internal Server Error',
+    })
+  })
+})
+
+describe('downloadTranscript', () => {
+  it('fetches the transcript with the Bearer token and returns a Blob', async () => {
+    const fetchMock = stubFetch(new Response('hola\n→ hello\n', { status: 200 }))
+
+    const blob = await downloadTranscript(SESSION, 's1', null)
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('http://localhost:8000/api/sessions/s1/transcript')
+    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer tok-123')
+    expect(await blob.text()).toBe('hola\n→ hello\n')
+  })
+
+  it('passes target_language when re-translating', async () => {
+    const fetchMock = stubFetch(new Response('', { status: 200 }))
+
+    await downloadTranscript(SESSION, 's1', 'fr')
+
+    const [url] = fetchMock.mock.calls[0]
+    expect(url).toBe('http://localhost:8000/api/sessions/s1/transcript?target_language=fr')
+  })
+
+  it('throws an ApiError on failure', async () => {
+    stubFetch(new Response(JSON.stringify({ detail: 'Session not found' }), { status: 404 }))
+
+    await expect(downloadTranscript(SESSION, 'missing', null)).rejects.toMatchObject({
+      status: 404,
+      detail: 'Session not found',
     })
   })
 })

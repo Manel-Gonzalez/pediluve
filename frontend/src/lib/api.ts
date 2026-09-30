@@ -75,6 +75,18 @@ export class ApiError extends Error {
   }
 }
 
+async function throwIfNotOk(response: Response): Promise<void> {
+  if (response.ok) return
+  // FastAPI's default error body is {"detail": "..."} - fall back to the
+  // status text if the body isn't JSON (e.g. a proxy/network error page).
+  const body: unknown = await response.json().catch(() => null)
+  const detail =
+    body && typeof body === 'object' && 'detail' in body && typeof body.detail === 'string'
+      ? body.detail
+      : response.statusText
+  throw new ApiError(response.status, detail)
+}
+
 async function apiFetch<T>(path: string, session: Session, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${getApiUrl()}${path}`, {
     ...init,
@@ -85,16 +97,7 @@ async function apiFetch<T>(path: string, session: Session, init: RequestInit = {
     },
   })
 
-  if (!response.ok) {
-    // FastAPI's default error body is {"detail": "..."} - fall back to the
-    // status text if the body isn't JSON (e.g. a proxy/network error page).
-    const body: unknown = await response.json().catch(() => null)
-    const detail =
-      body && typeof body === 'object' && 'detail' in body && typeof body.detail === 'string'
-        ? body.detail
-        : response.statusText
-    throw new ApiError(response.status, detail)
-  }
+  await throwIfNotOk(response)
 
   // DELETE returns 204 with no body - nothing to parse.
   if (response.status === 204) return undefined as T
@@ -168,6 +171,23 @@ export function addGuestSession(
     method: 'POST',
     body: JSON.stringify({ share_token: shareToken, target_language: targetLanguage }),
   })
+}
+
+// GET /api/sessions/{id}/transcript (KAN-61) as a Blob - fetched rather
+// than linked to directly, since the request needs the Authorization
+// header a plain <a href> can't send. targetLanguage null = each message's
+// own stored translation; set = re-translated on demand, nothing persisted.
+export async function downloadTranscript(
+  session: Session,
+  id: string,
+  targetLanguage: string | null,
+): Promise<Blob> {
+  const query = targetLanguage ? `?target_language=${encodeURIComponent(targetLanguage)}` : ''
+  const response = await fetch(`${getApiUrl()}/api/sessions/${id}/transcript${query}`, {
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  })
+  await throwIfNotOk(response)
+  return response.blob()
 }
 
 export function removeGuestSession(session: Session, id: string): Promise<void> {
