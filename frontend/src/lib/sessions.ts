@@ -1,4 +1,25 @@
+import { DEFAULT_TARGET_LANGUAGE } from './languageControls'
 import type { SessionSummary } from './types'
+
+type ViewLanguageSource = Pick<SessionSummary, 'role' | 'guest_language' | 'target_language'>
+
+// Which language SessionDetailPage opens in. A guest who picked a language
+// when saving the session (guest_language) sees it in that one - on-demand
+// translated if it differs from the owner's stored target_language. Anyone
+// else opens in the stored language, and landing on the page never spends
+// a DeepL call on its own (see SessionDetailPage).
+export function initialViewLanguage(session: ViewLanguageSource): {
+  language: string
+  needsTranslation: boolean
+} {
+  if (session.role === 'guest' && session.guest_language) {
+    return {
+      language: session.guest_language,
+      needsTranslation: session.guest_language !== session.target_language,
+    }
+  }
+  return { language: session.target_language ?? DEFAULT_TARGET_LANGUAGE, needsTranslation: false }
+}
 
 // "Untitled - <date>" for a session with no title. Shouldn't happen once
 // KAN-37's create modal requires one, but keeps the list robust against

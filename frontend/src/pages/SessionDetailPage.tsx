@@ -6,7 +6,12 @@ import { useAuth } from '../hooks/useAuth'
 import { ApiError, downloadTranscript, getSession, translateSession } from '../lib/api'
 import { saveBlob, transcriptFilename } from '../lib/download'
 import { DEFAULT_TARGET_LANGUAGE, SUPPORTED_LANGUAGES } from '../lib/languageControls'
-import type { SessionDetail } from '../lib/types'
+import { initialViewLanguage } from '../lib/sessions'
+import type { SessionDetail, TranslateResponse } from '../lib/types'
+
+function toTranslationMap(response: TranslateResponse): Map<string, string | null> {
+  return new Map(response.translations.map((t) => [t.message_id, t.translated_text]))
+}
 
 export function SessionDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -47,7 +52,25 @@ function SessionDetailPageContent({ session, sessionId }: { session: Session; se
       .then((row) => {
         if (cancelled) return
         setDetail(row)
-        setViewLanguage(row.target_language ?? DEFAULT_TARGET_LANGUAGE)
+        const { language, needsTranslation } = initialViewLanguage(row)
+        setViewLanguage(language)
+        // Only ever true for a guest who picked their own language when
+        // saving the session - the one case landing here spends a DeepL
+        // call, since that's the language they asked to read it in.
+        if (!needsTranslation) return
+        setTranslating(true)
+        translateSession(session, sessionId, language)
+          .then((response) => {
+            if (!cancelled) setTranslations(toTranslationMap(response))
+          })
+          .catch((err: unknown) => {
+            if (!cancelled) {
+              setTranslateError(err instanceof ApiError ? err.detail : 'Could not translate session')
+            }
+          })
+          .finally(() => {
+            if (!cancelled) setTranslating(false)
+          })
       })
       .catch((err: unknown) => {
         if (cancelled) return
@@ -80,7 +103,7 @@ function SessionDetailPageContent({ session, sessionId }: { session: Session; se
     setTranslating(true)
     try {
       const response = await translateSession(session, sessionId, language)
-      setTranslations(new Map(response.translations.map((t) => [t.message_id, t.translated_text])))
+      setTranslations(toTranslationMap(response))
     } catch (err) {
       setTranslateError(err instanceof ApiError ? err.detail : 'Could not translate session')
     } finally {
