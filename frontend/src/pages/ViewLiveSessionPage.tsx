@@ -1,4 +1,5 @@
 import { Link, useParams } from 'react-router-dom'
+import { PlayButton } from '../components/PlayButton'
 import { TranscriptRow } from '../components/TranscriptRow'
 import { useLiveViewer } from '../hooks/useLiveViewer'
 import { SUPPORTED_LANGUAGES } from '../lib/languageControls'
@@ -20,8 +21,19 @@ function describeState(state: string | null): string {
 }
 
 function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
-  const { joinStatus, title, sourceLanguage, state, lines, targetLanguage, setTargetLanguage } =
-    useLiveViewer(shareToken)
+  const {
+    joinStatus,
+    title,
+    sourceLanguage,
+    state,
+    lines,
+    targetLanguage,
+    setTargetLanguage,
+    audioUrls,
+    audioErrors,
+    audioLoading,
+    requestAudio,
+  } = useLiveViewer(shareToken)
 
   if (joinStatus === 'not_found') {
     return (
@@ -67,15 +79,25 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
 
       <div className="my-4 flex flex-col gap-3">
         {lines.map((line) => (
-          <TranscriptRow
-            key={line.index}
-            row={{
-              original_text: line.original_text,
-              translated_text: line.translated_text,
-              target_language: targetLanguage,
-            }}
-            sourceLanguage={sourceLanguage}
-          />
+          <div key={line.index} className="flex flex-col gap-1.5">
+            <TranscriptRow
+              row={{
+                original_text: line.original_text,
+                translated_text: line.translated_text,
+                target_language: targetLanguage,
+              }}
+              sourceLanguage={sourceLanguage}
+            />
+            {line.translated_text && (
+              <PlayButton
+                index={line.index}
+                audioUrl={audioUrls[line.index] ?? null}
+                loading={audioLoading[line.index] ?? false}
+                error={audioErrors[line.index] ?? null}
+                onRequestAudio={requestAudio}
+              />
+            )}
+          </div>
         ))}
         {joinStatus === 'joining' && <p className="text-sm text-ink-500">Connecting…</p>}
         {joinStatus === 'joined' && lines.length === 0 && (

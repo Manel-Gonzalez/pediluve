@@ -21,6 +21,12 @@ export function useLiveViewer(shareToken: string) {
   const [state, setState] = useState<LiveState | null>(null)
   const [lines, setLines] = useState<LiveLineData[]>([])
   const [targetLanguage, setTargetLanguageState] = useState(DEFAULT_TARGET_LANGUAGE)
+  // Keyed by room-local line index - a signed URL is only ever valid for
+  // the language it was requested under (KAN-58 caches per message+
+  // language), so all three are cleared on every language switch.
+  const [audioUrls, setAudioUrls] = useState<Record<number, string>>({})
+  const [audioErrors, setAudioErrors] = useState<Record<number, string>>({})
+  const [audioLoading, setAudioLoading] = useState<Record<number, boolean>>({})
   // Read inside onmessage instead of the "targetLanguage" state closed over
   // at mount, so a live_line for a language just switched away from (a
   // request already in flight when set_viewer_language was sent) gets
@@ -76,8 +82,25 @@ export function useLiveViewer(shareToken: string) {
         setState(data.state)
         return
       }
-      // audio_ready/audio_failed (KAN-58) and error are not handled by this
-      // page yet - nothing to render for them until TTS lands.
+      if (data.type === 'audio_ready') {
+        setAudioUrls((prev) => ({ ...prev, [data.index]: data.audio_url }))
+        setAudioErrors((prev) => {
+          if (!(data.index in prev)) return prev
+          const next = { ...prev }
+          delete next[data.index]
+          return next
+        })
+        setAudioLoading((prev) => ({ ...prev, [data.index]: false }))
+        return
+      }
+      if (data.type === 'audio_failed') {
+        setAudioErrors((prev) => ({ ...prev, [data.index]: data.message }))
+        setAudioLoading((prev) => ({ ...prev, [data.index]: false }))
+        return
+      }
+      // error is not handled by this page - a pre-join_live failure is
+      // already covered by the close-code check in onclose above, and no
+      // other error is currently sent post-join.
     }
 
     return () => socket.close()
@@ -90,7 +113,18 @@ export function useLiveViewer(shareToken: string) {
     (language: string) => {
       targetLanguageRef.current = language
       setTargetLanguageState(language)
+      setAudioUrls({})
+      setAudioErrors({})
+      setAudioLoading({})
       sendJson({ type: 'set_viewer_language', target_language: language })
+    },
+    [sendJson],
+  )
+
+  const requestAudio = useCallback(
+    (index: number) => {
+      setAudioLoading((prev) => ({ ...prev, [index]: true }))
+      sendJson({ type: 'request_audio', index })
     },
     [sendJson],
   )
@@ -103,5 +137,9 @@ export function useLiveViewer(shareToken: string) {
     lines,
     targetLanguage,
     setTargetLanguage,
+    audioUrls,
+    audioErrors,
+    audioLoading,
+    requestAudio,
   }
 }
