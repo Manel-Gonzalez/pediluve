@@ -37,12 +37,13 @@ pediluve/
 │   │   │                    TranscriptRow (shared by the live view and history), SessionListRow,
 │   │   │                    SharePanel (QR + copy link), PlayButton, AddToMySessions (guest)
 │   │   ├── hooks/         ← useWebSocket (join_session/pause-resume aware), useMicrophone,
-│   │   │                    useAuth (AuthProvider), useLiveViewer (/ws/view), useAudioPlayer
+│   │   │                    useAuth (AuthProvider), useLiveViewer (/ws/view), useAudioPlayer,
+│   │   │                    useLiveListen ("Listen live" queue)
 │   │   ├── pages/         ← LoginPage, HomePage (sessions list + "New session"), LiveSessionPage
 │   │   │                    (/sessions/:id/live), SessionDetailPage (/sessions/:id, read-only),
 │   │   │                    ViewLiveSessionPage (/view/:shareToken, anonymous, outside RequireAuth)
 │   │   ├── lib/           ← api client (REST + ApiError), types, auth/languageControls/
-│   │   │                    recording/sessions/sessionTitle/routes/share helpers
+│   │   │                    recording/sessions/sessionTitle/routes/share/download/liveTranscript helpers
 │   │   ├── audio/         ← pcm-worklet.js (AudioWorkletProcessor)
 │   │   ├── App.tsx        ← route table only (RequireAuth + pages/)
 │   │   └── main.tsx       ← AuthProvider + BrowserRouter wiring
@@ -217,13 +218,13 @@ Phase 5 — QR code live viewer + TTS, all 20 subtasks under KAN-50 implemented 
   download), KAN-62 (`AddToMySessions` on the viewer page), KAN-63 (guest rows + badge on
   `HomePage`).
 
-Backend tests (`pytest`, 240+) and frontend tests (`vitest`, 74+) both passing locally. **Not yet
-verified end-to-end in a real browser**: this was built in a sandboxed environment with no real
-ElevenLabs/DeepL/Supabase credentials and no second device to actually scan a QR code with (same
-limitation noted for earlier phases) — worth a real run-through (record → scan → watch live in
-another language → play audio → add as guest → download transcript) before this is considered done.
-Migrations 005–008 also still need to be applied to the real Supabase project (SQL Editor, in
-order) — they haven't been run against it yet.
+Migrations 005–008 are **applied** to the real Supabase project. **Verified end-to-end on real
+devices**: owner recording on `localhost`, viewers on phones over the LAN via the QR code, live
+translation into each viewer's own language, TTS playback (per line and "Listen live"), refresh
+mid-session keeps the history, add as guest → guest row on `HomePage`, session ended, both
+download buttons. Not tested on an iPhone, nor from outside the local network (local-only by
+design). Real-device testing led to follow-up fixes and features on the same branch - see
+`docs/decisions.md`'s "Phase 5: changes after real-device testing" entry. Backend tests
+(`pytest`, 250) and frontend tests (`vitest`, 94) passing.
 
-Next: apply migrations 005–008, verify Phase 5 end-to-end in a real browser (ideally with a second
-device for the QR flow), then merge `feature/KAN-50` to `main`.
+Next: merge `feature/KAN-50` to `main`.

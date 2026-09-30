@@ -418,6 +418,43 @@ Phase 6 below for the actual spike), TTS playback on the owner's own live/histor
 only exists on `/ws/view`; adding it to owner `/ws` or as a new REST endpoint wasn't part of the
 approved scope for this week).
 
+## Phase 5: changes after real-device testing (KAN-50)
+
+The first real run (owner on a laptop, viewers on phones over the LAN) surfaced issues the unit tests
+couldn't, plus a few UX changes. Recorded here because each one changed a design assumption above.
+
+- **The owner records on `localhost`; the QR link uses `VITE_SHARE_BASE_URL`.** `getUserMedia` only
+  exists in a secure context (`localhost` or https), so an owner opening the app at its LAN IP has
+  no mic at all. But a QR code built from `localhost` sends the phone to itself. The share link's
+  base URL is therefore configurable (`lib/share.ts`) and set to the machine's LAN origin, while
+  the owner stays on `localhost`.
+- **Storage calls carry the user's JWT, not the anon key.** supabase-py builds `client.storage`
+  from `client.options.headers`, not from the PostgREST auth that `client_for` was setting, so
+  every upload ran as `anon` and hit the bucket's RLS. `client_for` now sets both. The fakes in
+  the tests had modelled the client wrongly, which is why only real Supabase caught it; a test
+  now asserts on a real client's Storage headers.
+- **A live room is seeded with the session's stored history.** A room started empty, so a viewer
+  who refreshed mid-session (or joined late) lost every earlier line. The owner's `join_session`
+  already reads the full history under its own RLS, so `LiveRoom.seed_history` loads it into the
+  room: still no viewer ever touches Postgres (D3). For the same reason a guest who saved a session
+  and left halfway sees the complete session afterwards: a guest row points at the live original,
+  never at a snapshot.
+- **The viewer shows only the translation**, since it's meant for phones. Its "Download
+  translation" builds the file client-side from lines already in memory, because an anonymous
+  viewer has no Supabase session to call the authenticated transcript endpoint with.
+  `SessionDetailPage` uses that endpoint instead.
+- **A guest's saved session opens in the guest's own language** (`session_guests.target_language`,
+  translated on demand as in Phase 4), not the owner's.
+- **"Listen live" reads new lines aloud as they arrive** (`hooks/useLiveListen.ts`). It starts from
+  the next line, not the backlog: reading everything said so far would leave the listener
+  permanently behind. Each line's audio is requested as soon as it's queued, so the next one is
+  generated while the current one plays. Per-line Play buttons are hidden while it's on, so a
+  manual tap can't cut into the queue. Playback goes through one reused `<audio>` element,
+  unlocked with a silent clip inside the tap that starts it, because iOS Safari blocks `play()`
+  calls that don't come from a user gesture.
+- **The backend runs with `--timeout-graceful-shutdown 3`.** On Windows, uvicorn hung forever at
+  "Shutting down" while a phone's `/ws/view` socket was open; the timeout bounds that wait.
+
 ## Future: persisting partial transcripts + manual edit (parked, Phase 6+)
 
 **Context:** Manel's idea, while verifying Phase 4 by hand: if you pause right as you're mid-sentence,

@@ -69,7 +69,8 @@ endpoint (`/ws/view`) that never talks to Postgres directly: everything a viewer
 in-memory room the owner's own connection populates as it commits and translates each line, so a
 slow or malicious viewer connection can never affect the owner's own session. A signed-in viewer can
 add the session to their own account ("Add to my sessions") to keep read-only access after the live
-session ends. See `docs/decisions.md`'s "Phase 5: QR code live viewer" entry for the full
+session ends. The viewer page is built for phones: it shows only the translation, can download it as
+a text file, and has a **Listen live** mode that reads each new line aloud as it arrives. See `docs/decisions.md`'s "Phase 5: QR code live viewer" entry for the full
 architecture.
 
 ## Stack
@@ -97,7 +98,7 @@ Everything runs on `localhost`. No deployment in v1.
 - [x] **Phase 3 — Accounts**: Supabase Auth (email + password), React Router (`/login` + a guarded app), sessions scoped to the signed-in user via Row Level Security
 - [x] **Phase 4 — Session-first flow**: name and create a session explicitly (home page → "New session"), its live view joins that session over the WebSocket and can be paused/resumed without ending it, a past session's full transcript is a read-only page, re-translate it to another language on demand, rename/delete from the home list
 - [x] **Phase 4.5 — Visual design**: Tailwind CSS with a small design-token system (colors, type scale), every page/component migrated off hand-written CSS, a redesigned paired-card transcript view
-- [x] **Phase 5 — QR code live viewer + TTS** *(implemented, pending real-browser verification and merge)*: a QR code / share link gives anyone a read-only live view of a session, translating live into their own language, no account needed; a signed-in viewer can add it to their own sessions; play a translated line back, generated once and cached in Supabase Storage, for the owner and viewers alike
+- [x] **Phase 5 — QR code live viewer + TTS**: a QR code / share link gives anyone a read-only live view of a session, translating live into their own language, no account needed; a signed-in viewer can add it to their own sessions; play a translated line back, generated once and cached in Supabase Storage, for the owner and viewers alike
 - [ ] **Phase 6 — Spike** *(current)*: speaker labels, only if a real multi-mic use case shows up; further voice-activity-detection tuning
 
 ## Running locally
@@ -117,6 +118,7 @@ cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp ../.env.example .env   # fill in your keys (ElevenLabs, DeepL, Supabase URL + anon key)
+python -m pytest          # optional: backend test suite
 uvicorn main:app --reload --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 3
 ```
 
@@ -124,7 +126,13 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown
 needed for the QR live viewer (KAN-50): the mic-capturing owner needs a secure context, so keep
 recording on `http://localhost:5173`, but the anonymous viewer opens the share link at your
 machine's LAN IP instead. Add that LAN origin (e.g. `http://192.168.1.42:5173`) to `CORS_ORIGINS`
-in `backend/.env` alongside `http://localhost:5173`.
+in `backend/.env` alongside `http://localhost:5173` - full origins, scheme and port included, or
+the CORS preflight is rejected. uvicorn doesn't reload `.env` on `--reload`: restart it after
+editing that file.
+
+ElevenLabs: the API key needs both the Speech to Text and Text to Speech permissions, and on the
+free plan `ELEVENLABS_VOICE_ID` must be one of the default voices (Voice Library voices return 402
+through the API).
 
 `--timeout-graceful-shutdown 3` caps how long Ctrl+C waits for open connections. Without it, on
 Windows (Python 3.12, asyncio's default event loop) uvicorn can hang forever at "Shutting down"
@@ -138,7 +146,14 @@ cd frontend
 npm install
 cp ../.env.example .env   # only the VITE_ vars in it are read here
 npm run dev   # http://localhost:5173
+npm test      # optional: frontend test suite
 ```
+
+For the QR live viewer, set `VITE_SHARE_BASE_URL` in `frontend/.env` to your machine's LAN origin
+(e.g. `http://192.168.1.42:5173`) and keep using `http://localhost:5173` yourself. The browser only
+allows mic capture on `localhost` or https, so the owner can't record from the LAN address, and
+a QR code built from `localhost` would point the phone at itself. The phone must be on the same
+Wi-Fi; nothing here is reachable from outside your network.
 
 Open `http://localhost:5173`, register an account (redirects to `/login` automatically until you
 do), click **New session** on the home page and give it a name, then start recording on its live
