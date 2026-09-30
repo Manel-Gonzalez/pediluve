@@ -70,7 +70,7 @@ describe('apiFetch (via the typed wrappers)', () => {
     await createSession(SESSION, 'Standup')
 
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('http://localhost:8000/api/sessions')
+    expect(url).toBe('http://localhost:5173/api/sessions')
     expect(init.method).toBe('POST')
     const headers = new Headers(init.headers)
     expect(headers.get('Content-Type')).toBe('application/json')
@@ -137,7 +137,7 @@ describe('downloadTranscript', () => {
     const blob = await downloadTranscript(SESSION, 's1', null)
 
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('http://localhost:8000/api/sessions/s1/transcript')
+    expect(url).toBe('http://localhost:5173/api/sessions/s1/transcript')
     expect(new Headers(init.headers).get('Authorization')).toBe('Bearer tok-123')
     expect(await blob.text()).toBe('hola\n→ hello\n')
   })
@@ -148,7 +148,7 @@ describe('downloadTranscript', () => {
     await downloadTranscript(SESSION, 's1', 'fr')
 
     const [url] = fetchMock.mock.calls[0]
-    expect(url).toBe('http://localhost:8000/api/sessions/s1/transcript?target_language=fr')
+    expect(url).toBe('http://localhost:5173/api/sessions/s1/transcript?target_language=fr')
   })
 
   it('throws an ApiError on failure', async () => {
@@ -161,32 +161,35 @@ describe('downloadTranscript', () => {
   })
 })
 
-describe('getApiUrl / getWebSocketUrl LAN host derivation', () => {
+describe('getApiUrl / getWebSocketUrl same-origin derivation', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
   })
 
-  it('derives the backend host from the given location, not a hardcoded "localhost"', () => {
-    const location = { hostname: '192.168.1.42', protocol: 'http:' }
-    expect(getApiUrl(location)).toBe('http://192.168.1.42:8000')
-    expect(getWebSocketUrl(location)).toBe('ws://192.168.1.42:8000/ws')
+  // KAN-66: the browser only ever talks to the page's own origin and the
+  // Vite dev server proxies /api and /ws to the backend - one URL works on
+  // localhost, over the LAN and through a tunnel alike.
+  it('targets the page\'s own origin, port included', () => {
+    const location = { host: '192.168.1.42:5173', protocol: 'http:' }
+    expect(getApiUrl(location)).toBe('http://192.168.1.42:5173')
+    expect(getWebSocketUrl(location)).toBe('ws://192.168.1.42:5173/ws')
   })
 
   it('uses wss/https when the page itself was loaded over https', () => {
-    const location = { hostname: 'pediluve.example', protocol: 'https:' }
-    expect(getApiUrl(location)).toBe('https://pediluve.example:8000')
-    expect(getWebSocketUrl(location)).toBe('wss://pediluve.example:8000/ws')
+    const location = { host: 'abc-def.trycloudflare.com', protocol: 'https:' }
+    expect(getApiUrl(location)).toBe('https://abc-def.trycloudflare.com')
+    expect(getWebSocketUrl(location)).toBe('wss://abc-def.trycloudflare.com/ws')
   })
 
-  it('falls back to localhost when no location is available (e.g. non-browser context)', () => {
-    expect(getApiUrl(undefined)).toBe('http://localhost:8000')
-    expect(getWebSocketUrl(undefined)).toBe('ws://localhost:8000/ws')
+  it('falls back to the dev server on localhost when no location is available', () => {
+    expect(getApiUrl(undefined)).toBe('http://localhost:5173')
+    expect(getWebSocketUrl(undefined)).toBe('ws://localhost:5173/ws')
   })
 
   it('VITE_API_URL / VITE_WS_URL still override the derived host when set', () => {
     vi.stubEnv('VITE_API_URL', 'https://api.example.com')
     vi.stubEnv('VITE_WS_URL', 'wss://api.example.com/ws')
-    const location = { hostname: '192.168.1.42', protocol: 'http:' }
+    const location = { host: '192.168.1.42:5173', protocol: 'http:' }
     expect(getApiUrl(location)).toBe('https://api.example.com')
     expect(getWebSocketUrl(location)).toBe('wss://api.example.com/ws')
   })
@@ -198,13 +201,13 @@ describe('getViewerWebSocketUrl', () => {
   })
 
   it('derives the /ws/view path from the given location', () => {
-    const location = { hostname: '192.168.1.42', protocol: 'http:' }
-    expect(getViewerWebSocketUrl(location)).toBe('ws://192.168.1.42:8000/ws/view')
+    const location = { host: '192.168.1.42:5173', protocol: 'http:' }
+    expect(getViewerWebSocketUrl(location)).toBe('ws://192.168.1.42:5173/ws/view')
   })
 
   it('swaps the path on VITE_WS_URL rather than ignoring it', () => {
     vi.stubEnv('VITE_WS_URL', 'wss://api.example.com/ws')
-    expect(getViewerWebSocketUrl({ hostname: 'ignored', protocol: 'http:' })).toBe(
+    expect(getViewerWebSocketUrl({ host: 'ignored', protocol: 'http:' })).toBe(
       'wss://api.example.com/ws/view',
     )
   })
