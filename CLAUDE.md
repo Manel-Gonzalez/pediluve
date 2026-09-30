@@ -19,6 +19,7 @@ This is a portfolio project. Code quality and clear structure matter more than s
 - **Auth:** Supabase Auth (Phase 3 only), email + password. No other provider (no OAuth, no magic link) in v1.
 - **Routing:** React Router, introduced in Phase 3 (`/login`, `RequireAuth`-guarded routes) — Phase 4 adds routable per-session URLs on top of the same router rather than introducing one from scratch. No routing before Phase 3.
 - **Audio capture:** Web Audio API + `AudioWorklet`, raw PCM (`pcm_16000` or whatever the browser's `AudioContext` actually negotiates). No `MediaRecorder`/WebM, no `pydub`/`ffmpeg` — ElevenLabs realtime needs uncompressed audio, so there's no container to convert.
+- **Sharing:** a QR code / share link (`qrcode` on the frontend) gives anyone a read-only live view of a session at `/view/:shareToken`, no account needed — see `docs/decisions.md`'s "Phase 5: QR code live viewer" entry (D1–D6) for the full architecture.
 
 ## Repo structure
 
@@ -33,13 +34,15 @@ pediluve/
 ├── frontend/
 │   ├── src/
 │   │   ├── components/    ← AuthForm, Nav, RequireAuth (route guard), NewSessionModal,
-│   │   │                    TranscriptRow (shared by the live view and history), SessionListRow
+│   │   │                    TranscriptRow (shared by the live view and history), SessionListRow,
+│   │   │                    SharePanel (QR + copy link), PlayButton, AddToMySessions (guest)
 │   │   ├── hooks/         ← useWebSocket (join_session/pause-resume aware), useMicrophone,
-│   │   │                    useAuth (AuthProvider)
+│   │   │                    useAuth (AuthProvider), useLiveViewer (/ws/view), useAudioPlayer
 │   │   ├── pages/         ← LoginPage, HomePage (sessions list + "New session"), LiveSessionPage
-│   │   │                    (/sessions/:id/live), SessionDetailPage (/sessions/:id, read-only)
+│   │   │                    (/sessions/:id/live), SessionDetailPage (/sessions/:id, read-only),
+│   │   │                    ViewLiveSessionPage (/view/:shareToken, anonymous, outside RequireAuth)
 │   │   ├── lib/           ← api client (REST + ApiError), types, auth/languageControls/
-│   │   │                    recording/sessions/sessionTitle/routes helpers
+│   │   │                    recording/sessions/sessionTitle/routes/share helpers
 │   │   ├── audio/         ← pcm-worklet.js (AudioWorkletProcessor)
 │   │   ├── App.tsx        ← route table only (RequireAuth + pages/)
 │   │   └── main.tsx       ← AuthProvider + BrowserRouter wiring
@@ -47,14 +50,19 @@ pediluve/
 │   └── vite.config.ts
 ├── backend/
 │   ├── main.py            ← FastAPI app, WebSocket + REST routers
-│   ├── routers/           ← ws.py (join_session/pause-resume), me.py (GET /me),
-│   │                        sessions.py (REST CRUD + on-demand translate)
+│   ├── routers/           ← ws.py (owner: join_session/pause-resume, publishes into its
+│   │                        live room), viewer_ws.py (anonymous /ws/view, KAN-50), me.py
+│   │                        (GET /me), sessions.py (REST CRUD, on-demand translate,
+│   │                        guest add/remove, transcript download)
 │   ├── services/
-│   │   ├── elevenlabs.py
+│   │   ├── elevenlabs.py  ← realtime STT session + synthesize() (TTS)
 │   │   ├── deepl.py       ← translate() + translate_many() (batched re-translation)
+│   │   ├── live_rooms.py  ← in-memory LiveRoom/LiveRoomRegistry fan-out for /ws/view (KAN-50)
+│   │   ├── storage.py     ← Supabase Storage for cached TTS audio
+│   │   ├── tts_cache.py   ← message_audio cache lookup/synthesize/upload orchestration
 │   │   ├── supabase.py
 │   │   └── auth.py        ← verify_access_token (Supabase Auth)
-│   ├── models/            ← Pydantic schemas (messages.py, sessions.py, auth.py)
+│   ├── models/            ← Pydantic schemas (messages.py, viewer.py, sessions.py, auth.py)
 │   ├── requirements.txt
 │   └── .env               ← gitignored
 └── supabase/
@@ -62,8 +70,12 @@ pediluve/
         ├── 001_initial.sql
         ├── 002_disable_rls.sql            ← superseded by 003, kept as history
         ├── 003_auth_and_rls.sql           ← sessions.user_id, RLS + owner policies
-        └── 004_nullable_target_language.sql  ← sessions.target_language nullable,
-                                                unique(session_id, sequence) on messages
+        ├── 004_nullable_target_language.sql  ← sessions.target_language nullable,
+        │                                       unique(session_id, sequence) on messages
+        ├── 005_share_token.sql            ← sessions.share_token (KAN-50)
+        ├── 006_message_audio.sql          ← message_audio table, keyed by (message_id, language)
+        ├── 007_message_audio_storage_bucket.sql  ← Storage bucket + owner-scoped RLS
+        └── 008_session_guests.sql         ← session_guests table + add_session_guest RPC
 ```
 
 ## Conventions
@@ -109,9 +121,18 @@ stays in `messages.translated_text`/`target_language` untouched).
 component; every existing page and component migrated to it; the transcript view redesigned into
 paired cards with language badges. No new functionality — a styling pass over what Phase 3/4 built.
 
-**Phase 5:** "play" button per translated message → ElevenLabs TTS → audio generated once and
-cached in Supabase Storage (a repeat play serves the stored file, not a fresh paid TTS call) →
-playback in browser. One fixed voice for v1, not one per language.
+**Phase 5:** two pieces of work, delivered together under KAN-50 (see `docs/decisions.md`'s "Phase 5:
+QR code live viewer" entry, D1–D6, for the full architecture behind both):
+- **QR code live viewer:** the owner's live session view shows a share link + QR code
+  (`SharePanel`); anyone who opens it (`/view/:shareToken`, no account needed) sees committed lines
+  translate live into their own chosen language, over a separate anonymous `/ws/view` endpoint that
+  never touches Postgres directly — everything comes from an in-memory room the owner's own
+  connection populates. A signed-in guest can "Add to my sessions" from that page to keep read-only
+  access after the live session ends (owner-only for rename/delete/target-language, enforced by RLS).
+- **TTS playback**, extended to cover the viewer, not just the owner: a "play" button per translated
+  line → ElevenLabs TTS → audio generated once and cached in Supabase Storage, keyed by `(message,
+  language)` so a viewer picking their own language never re-triggers a paid call for one already
+  cached — one fixed voice for v1, not one per language.
 
 **Phase 6 (parked, exploratory only):** speaker labels if multiple audio inputs. No multi-channel
 capture exists yet and there's no confirmed use case for it — start with a spike (is there a real
@@ -124,7 +145,10 @@ add-on.
 ## What NOT to do
 
 - Don't add multi-tenant/org complexity — Phase 3 adds per-user accounts (Supabase Auth), not
-  roles, teams, or admin features. Each user only ever sees their own sessions.
+  roles, teams, or admin features. Each user only ever sees their own sessions. Phase 5's guest
+  access (KAN-59, "add to my sessions" from a share link) is a deliberate, narrow exception: one
+  fixed read-only relationship, no roles table — see `docs/decisions.md`'s D6 before extending it
+  into anything broader.
 - Don't add Docker in v1. `uvicorn` + `npm run dev` is enough.
 - Don't add a state management library (Redux, Zustand). React state + context is enough.
 - Don't add tests in Phase 0. Add them from Phase 1 on for the backend services (done — see `backend/tests/`).
@@ -175,4 +199,31 @@ KAN-43 (`Nav`), KAN-44 (`AuthForm`, `NewSessionModal`), KAN-45 (`HomePage`), KAN
 with language badges, applied to both the live view and `SessionDetailPage`). Verified in a real
 browser (KAN-49).
 
-Next: plan Phase 5 (TTS playback).
+Phase 5 — QR code live viewer + TTS, all 20 subtasks under KAN-50 implemented on
+`feature/KAN-50`, not yet merged to `main`. Three milestones:
+- **Milestone A (viewer core):** KAN-51 (migration 005, `sessions.share_token`), KAN-52
+  (`services/live_rooms.py` — `LiveRoom`/`LiveRoomRegistry`), KAN-53 (LAN reachability —
+  `getApiUrl`/`getWebSocketUrl` derive their host from the page's own location, `vite.config.ts`
+  `server.host: true`), KAN-54 (owner `/ws` publishes into its room, owner-only `join_session`
+  guard), KAN-55 (anonymous `/ws/view` endpoint), KAN-56 (`ViewLiveSessionPage` at
+  `/view/:shareToken`), KAN-57 (`SharePanel` — QR code + copy link on `LiveSessionPage`).
+- **Milestone B (TTS playback):** KAN-28 (migration 006, `message_audio`), KAN-29 (real
+  `elevenlabs.synthesize()`), KAN-30 (`services/storage.py`), KAN-31 (`services/tts_cache.py`),
+  KAN-58 (viewer `request_audio` wired to the cache), KAN-32 (session delete cascades cached
+  audio in Storage), KAN-33 (`PlayButton`/`useAudioPlayer` on the viewer page).
+- **Milestone C (guests + download):** KAN-59 (migration 008, `session_guests` +
+  `add_session_guest` `SECURITY DEFINER` RPC), KAN-60 (`POST /api/shared/guest`,
+  `DELETE /api/sessions/{id}/guest`), KAN-61 (`GET /api/sessions/{id}/transcript` plain-text
+  download), KAN-62 (`AddToMySessions` on the viewer page), KAN-63 (guest rows + badge on
+  `HomePage`).
+
+Backend tests (`pytest`, 240+) and frontend tests (`vitest`, 74+) both passing locally. **Not yet
+verified end-to-end in a real browser**: this was built in a sandboxed environment with no real
+ElevenLabs/DeepL/Supabase credentials and no second device to actually scan a QR code with (same
+limitation noted for earlier phases) — worth a real run-through (record → scan → watch live in
+another language → play audio → add as guest → download transcript) before this is considered done.
+Migrations 005–008 also still need to be applied to the real Supabase project (SQL Editor, in
+order) — they haven't been run against it yet.
+
+Next: apply migrations 005–008, verify Phase 5 end-to-end in a real browser (ideally with a second
+device for the QR flow), then merge `feature/KAN-50` to `main`.

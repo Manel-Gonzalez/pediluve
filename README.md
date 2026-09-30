@@ -62,6 +62,16 @@ Recording can be paused and resumed any number of times within the same session 
 end it — only leaving the live view does); the session's full transcript stays available afterward
 at its own read-only URL, from the sessions list on the home page.
 
+**Sharing a live session (QR code):** the live view shows a QR code / link anyone can open at
+`/view/:shareToken` — no account needed — to watch that session's transcript translate live, in
+their own chosen language, on their own device. It's served by a second, anonymous WebSocket
+endpoint (`/ws/view`) that never talks to Postgres directly: everything a viewer sees comes from an
+in-memory room the owner's own connection populates as it commits and translates each line, so a
+slow or malicious viewer connection can never affect the owner's own session. A signed-in viewer can
+add the session to their own account ("Add to my sessions") to keep read-only access after the live
+session ends. See `docs/decisions.md`'s "Phase 5: QR code live viewer" entry for the full
+architecture.
+
 ## Stack
 
 | Layer | Tech | Why |
@@ -73,7 +83,8 @@ at its own read-only URL, from the sessions list on the home page.
 | Auth | Supabase Auth (email + password) | No custom auth endpoints to build or secure |
 | Routing | React Router | `/login` + per-session URLs, survives a reload |
 | Styling | Tailwind CSS | Design tokens (colors, type scale) instead of hand-rolled CSS per component |
-| TTS | ElevenLabs | Optional, on-demand playback |
+| TTS | ElevenLabs | On-demand playback, owner and QR viewers alike, cached per (message, language) |
+| Sharing | `qrcode` (frontend) | Plain SVG/data-URL QR code for a session's read-only live view link |
 | Persistence | Supabase (PostgreSQL) | Free tier, hosted, Row Level Security scopes data per user |
 
 Everything runs on `localhost`. No deployment in v1.
@@ -86,8 +97,8 @@ Everything runs on `localhost`. No deployment in v1.
 - [x] **Phase 3 — Accounts**: Supabase Auth (email + password), React Router (`/login` + a guarded app), sessions scoped to the signed-in user via Row Level Security
 - [x] **Phase 4 — Session-first flow**: name and create a session explicitly (home page → "New session"), its live view joins that session over the WebSocket and can be paused/resumed without ending it, a past session's full transcript is a read-only page, re-translate it to another language on demand, rename/delete from the home list
 - [x] **Phase 4.5 — Visual design**: Tailwind CSS with a small design-token system (colors, type scale), every page/component migrated off hand-written CSS, a redesigned paired-card transcript view
-- [ ] **Phase 5 — TTS** *(current)*: play a translated message back, generated once and cached in Supabase Storage
-- [ ] **Phase 6 — Spike**: speaker labels, only if a real multi-mic use case shows up; further voice-activity-detection tuning
+- [x] **Phase 5 — QR code live viewer + TTS** *(implemented, pending real-browser verification and merge)*: a QR code / share link gives anyone a read-only live view of a session, translating live into their own language, no account needed; a signed-in viewer can add it to their own sessions; play a translated line back, generated once and cached in Supabase Storage, for the owner and viewers alike
+- [ ] **Phase 6 — Spike** *(current)*: speaker labels, only if a real multi-mic use case shows up; further voice-activity-detection tuning
 
 ## Running locally
 
@@ -96,7 +107,7 @@ Everything runs on `localhost`. No deployment in v1.
 1. Create a project at [supabase.com](https://supabase.com) (or use an existing one).
 2. **Authentication → Providers → Email**: make sure it's enabled.
 3. **Authentication → Providers → Email → "Confirm email"**: turn this **off** for local dev (recommended) — with it on, registering returns no session until the user clicks a confirmation link, which needs an email template and a working "from" address neither of which this project sets up. Leave it on only if you specifically want to test that flow.
-4. **SQL Editor → New query**: run, in order, `supabase/migrations/001_initial.sql`, `003_auth_and_rls.sql`, then `004_nullable_target_language.sql` (`002_disable_rls.sql` is superseded by 003 and only kept as history — skip it). This creates the schema, adds `sessions.user_id`, turns on Row Level Security with owner-only policies, and (004) makes `sessions.target_language` nullable and adds a `unique(session_id, sequence)` constraint on `messages`.
+4. **SQL Editor → New query**: run, in order, `supabase/migrations/001_initial.sql`, `003_auth_and_rls.sql`, `004_nullable_target_language.sql`, `005_share_token.sql`, `006_message_audio.sql`, `007_message_audio_storage_bucket.sql`, then `008_session_guests.sql` (`002_disable_rls.sql` is superseded by 003 and only kept as history — skip it). This creates the schema, adds `sessions.user_id`, turns on Row Level Security with owner-only policies, (004) makes `sessions.target_language` nullable and adds a `unique(session_id, sequence)` constraint on `messages`, and (005–008) add the QR live viewer's `share_token`, the `message_audio` TTS cache table and its Storage bucket, and the `session_guests` table + `add_session_guest` RPC for "add to my sessions" (see `docs/decisions.md`'s Phase 5 entry).
 5. **Project Settings → API**: copy the Project URL and the `anon` `public` key (never the `service_role` key — it bypasses Row Level Security entirely) for the `.env` files below.
 
 ### Backend
