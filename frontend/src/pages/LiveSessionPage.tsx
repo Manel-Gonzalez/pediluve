@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { SharePanel } from '../components/SharePanel'
 import { TranscriptRow } from '../components/TranscriptRow'
 import { useAuth } from '../hooks/useAuth'
 import { useWebSocket } from '../hooks/useWebSocket'
@@ -34,6 +35,7 @@ function LiveSessionPageContent({ session, sessionId }: { session: Session; sess
     isAuthenticated,
     joinStatus,
     title,
+    shareToken,
     messages,
     partialTranscript,
     transcriptRows,
@@ -157,6 +159,8 @@ function LiveSessionPageContent({ session, sessionId }: { session: Session; sess
           End session
         </button>
       </div>
+
+      {shareToken && <SharePanel shareToken={shareToken} />}
 
       <div className="my-4 flex flex-wrap gap-6">
         <label className="flex flex-col gap-1 text-sm text-ink-900">

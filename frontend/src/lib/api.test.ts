@@ -5,9 +5,14 @@ import {
   buildSessionListQuery,
   createSession,
   deleteSession,
+  downloadTranscript,
+  getApiUrl,
   getSession,
+  getViewerWebSocketUrl,
+  getWebSocketUrl,
   listSessions,
 } from './api'
+
 
 const SESSION = { access_token: 'tok-123' } as Session
 
@@ -122,5 +127,85 @@ describe('apiFetch (via the typed wrappers)', () => {
       status: 500,
       detail: 'Internal Server Error',
     })
+  })
+})
+
+describe('downloadTranscript', () => {
+  it('fetches the transcript with the Bearer token and returns a Blob', async () => {
+    const fetchMock = stubFetch(new Response('hola\n→ hello\n', { status: 200 }))
+
+    const blob = await downloadTranscript(SESSION, 's1', null)
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('http://localhost:8000/api/sessions/s1/transcript')
+    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer tok-123')
+    expect(await blob.text()).toBe('hola\n→ hello\n')
+  })
+
+  it('passes target_language when re-translating', async () => {
+    const fetchMock = stubFetch(new Response('', { status: 200 }))
+
+    await downloadTranscript(SESSION, 's1', 'fr')
+
+    const [url] = fetchMock.mock.calls[0]
+    expect(url).toBe('http://localhost:8000/api/sessions/s1/transcript?target_language=fr')
+  })
+
+  it('throws an ApiError on failure', async () => {
+    stubFetch(new Response(JSON.stringify({ detail: 'Session not found' }), { status: 404 }))
+
+    await expect(downloadTranscript(SESSION, 'missing', null)).rejects.toMatchObject({
+      status: 404,
+      detail: 'Session not found',
+    })
+  })
+})
+
+describe('getApiUrl / getWebSocketUrl LAN host derivation', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('derives the backend host from the given location, not a hardcoded "localhost"', () => {
+    const location = { hostname: '192.168.1.42', protocol: 'http:' }
+    expect(getApiUrl(location)).toBe('http://192.168.1.42:8000')
+    expect(getWebSocketUrl(location)).toBe('ws://192.168.1.42:8000/ws')
+  })
+
+  it('uses wss/https when the page itself was loaded over https', () => {
+    const location = { hostname: 'pediluve.example', protocol: 'https:' }
+    expect(getApiUrl(location)).toBe('https://pediluve.example:8000')
+    expect(getWebSocketUrl(location)).toBe('wss://pediluve.example:8000/ws')
+  })
+
+  it('falls back to localhost when no location is available (e.g. non-browser context)', () => {
+    expect(getApiUrl(undefined)).toBe('http://localhost:8000')
+    expect(getWebSocketUrl(undefined)).toBe('ws://localhost:8000/ws')
+  })
+
+  it('VITE_API_URL / VITE_WS_URL still override the derived host when set', () => {
+    vi.stubEnv('VITE_API_URL', 'https://api.example.com')
+    vi.stubEnv('VITE_WS_URL', 'wss://api.example.com/ws')
+    const location = { hostname: '192.168.1.42', protocol: 'http:' }
+    expect(getApiUrl(location)).toBe('https://api.example.com')
+    expect(getWebSocketUrl(location)).toBe('wss://api.example.com/ws')
+  })
+})
+
+describe('getViewerWebSocketUrl', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('derives the /ws/view path from the given location', () => {
+    const location = { hostname: '192.168.1.42', protocol: 'http:' }
+    expect(getViewerWebSocketUrl(location)).toBe('ws://192.168.1.42:8000/ws/view')
+  })
+
+  it('swaps the path on VITE_WS_URL rather than ignoring it', () => {
+    vi.stubEnv('VITE_WS_URL', 'wss://api.example.com/ws')
+    expect(getViewerWebSocketUrl({ hostname: 'ignored', protocol: 'http:' })).toBe(
+      'wss://api.example.com/ws/view',
+    )
   })
 })

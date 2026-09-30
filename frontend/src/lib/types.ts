@@ -64,6 +64,8 @@ export type SessionJoinedMessage = {
   source_language: string | null
   target_language: string | null
   transcripts: TranscriptMessage[]
+  // The capability token for this session's QR/share link (KAN-50).
+  share_token: string
 }
 
 // Sent when the target language changes mid-session and there's already
@@ -91,6 +93,8 @@ export type ServerMessage =
 // throughout useAuth/useWebSocket - this "session" is a recording/transcript
 // session, the thing the home page lists.
 
+export type SessionRole = 'owner' | 'guest'
+
 export type SessionSummary = {
   id: string
   created_at: string
@@ -99,6 +103,12 @@ export type SessionSummary = {
   target_language: string | null
   title: string | null
   message_count: number
+  // "owner" for the account that created it, "guest" for one that added it
+  // via a share link (KAN-59/KAN-60/KAN-62) - a guest can read but never
+  // rename/delete/change the target language.
+  role: SessionRole
+  share_token: string
+  guest_language: string | null
 }
 
 export type SessionListResponse = {
@@ -128,3 +138,80 @@ export type TranslateResponse = {
   target_language: string
   translations: MessageTranslation[]
 }
+
+// ── /ws/view viewer models (KAN-50/KAN-56), matching backend/models/viewer.py
+
+export type LiveState = 'recording' | 'paused' | 'ended'
+
+export type LiveLineData = {
+  index: number
+  original_text: string
+  translated_text: string | null
+}
+
+export type JoinLiveMessage = {
+  type: 'join_live'
+  share_token: string
+  target_language: string
+}
+
+export type SetViewerLanguageMessage = {
+  type: 'set_viewer_language'
+  target_language: string
+}
+
+export type RequestAudioMessage = {
+  type: 'request_audio'
+  index: number
+}
+
+export type LiveJoinedMessage = {
+  type: 'live_joined'
+  title: string | null
+  source_language: string | null
+  target_language: string
+  state: LiveState
+  lines: LiveLineData[]
+}
+
+export type LiveLineMessage = {
+  type: 'live_line'
+  index: number
+  original_text: string
+  translated_text: string | null
+  target_language: string
+}
+
+export type LiveLinesRetranslatedMessage = {
+  type: 'live_lines_retranslated'
+  target_language: string
+  lines: LiveLineData[]
+}
+
+export type LiveStatusMessage = {
+  type: 'live_status'
+  state: LiveState
+}
+
+export type AudioReadyMessage = {
+  type: 'audio_ready'
+  index: number
+  target_language: string
+  audio_url: string
+  cached: boolean
+}
+
+export type AudioFailedMessage = {
+  type: 'audio_failed'
+  index: number
+  message: string
+}
+
+export type ViewerServerMessage =
+  | LiveJoinedMessage
+  | LiveLineMessage
+  | LiveLinesRetranslatedMessage
+  | LiveStatusMessage
+  | AudioReadyMessage
+  | AudioFailedMessage
+  | ErrorMessage

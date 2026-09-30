@@ -1,7 +1,7 @@
 import { useState, type KeyboardEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { Link } from 'react-router-dom'
-import { ApiError, deleteSession, renameSession } from '../lib/api'
+import { ApiError, deleteSession, removeGuestSession, renameSession } from '../lib/api'
 import { sessionPath } from '../lib/routes'
 import { validateSessionTitle } from '../lib/sessionTitle'
 import { formatSessionTitle } from '../lib/sessions'
@@ -86,6 +86,24 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
     }
   }
 
+  // Distinct from handleDelete: a guest never owns the session (KAN-59's
+  // RLS is owner-only for delete regardless), this only removes *their own*
+  // session_guests row - the session itself, and everyone else's access to
+  // it, is untouched.
+  const handleRemoveGuestSession = async () => {
+    const confirmed = window.confirm(`Remove "${formatSessionTitle(item)}" from your sessions?`)
+    if (!confirmed) return
+
+    try {
+      await removeGuestSession(session, item.id)
+      onDeleted(item.id)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        onMissing(item.id)
+      }
+    }
+  }
+
   return (
     <li className="flex items-center justify-between gap-4 rounded-lg border border-ink-200 p-4 transition-shadow hover:shadow-md hover:border-accent-200">
       {isEditing ? (
@@ -107,7 +125,14 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
         </div>
       ) : (
         <Link to={sessionPath(item.id)} className="flex flex-col gap-1 text-inherit no-underline">
-          <span className="font-semibold text-ink-900">{formatSessionTitle(item)}</span>
+          <span className="flex items-center gap-2 font-semibold text-ink-900">
+            {formatSessionTitle(item)}
+            {item.role === 'guest' && (
+              <span className="inline-block rounded bg-accent-50 px-1.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-accent-700">
+                Guest
+              </span>
+            )}
+          </span>
           <span className="text-sm text-ink-500">
             {new Date(item.created_at).toLocaleString()}
             {' · '}
@@ -118,21 +143,33 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
         </Link>
       )}
       <div className="flex gap-2 flex-shrink-0">
-        <button
-          type="button"
-          onClick={startEditing}
-          disabled={isEditing}
-          className="px-3 py-1 text-sm rounded-md border border-accent-500 text-accent-500 hover:bg-accent-50 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Rename
-        </button>
-        <button
-          type="button"
-          onClick={handleDelete}
-          className="px-3 py-1 text-sm rounded-md border border-ink-200 text-red-600 hover:bg-red-50"
-        >
-          Delete
-        </button>
+        {item.role === 'guest' ? (
+          <button
+            type="button"
+            onClick={handleRemoveGuestSession}
+            className="px-3 py-1 text-sm rounded-md border border-ink-200 text-red-600 hover:bg-red-50"
+          >
+            Remove
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={startEditing}
+              disabled={isEditing}
+              className="px-3 py-1 text-sm rounded-md border border-accent-500 text-accent-500 hover:bg-accent-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Rename
+            </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="px-3 py-1 text-sm rounded-md border border-ink-200 text-red-600 hover:bg-red-50"
+            >
+              Delete
+            </button>
+          </>
+        )}
       </div>
     </li>
   )

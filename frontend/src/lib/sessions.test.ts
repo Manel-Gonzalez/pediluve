@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   appendSessions,
   formatSessionTitle,
+  initialViewLanguage,
   removeSessionFromList,
   renameSessionInList,
 } from './sessions'
@@ -16,6 +17,9 @@ function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
     target_language: null,
     title: null,
     message_count: 0,
+    role: 'owner',
+    share_token: 'share-token-1',
+    guest_language: null,
     ...overrides,
   }
 }
@@ -86,5 +90,32 @@ describe('removeSessionFromList', () => {
     const sessions = [makeSession({ id: 'a' })]
     removeSessionFromList(sessions, 'a')
     expect(sessions).toHaveLength(1)
+  })
+})
+
+describe('initialViewLanguage', () => {
+  it("opens a guest's session in the language they picked, translating if it differs", () => {
+    const session = makeSession({ role: 'guest', guest_language: 'fr', target_language: 'es' })
+    expect(initialViewLanguage(session)).toEqual({ language: 'fr', needsTranslation: true })
+  })
+
+  it("needs no translation when the guest's language matches the stored one", () => {
+    const session = makeSession({ role: 'guest', guest_language: 'es', target_language: 'es' })
+    expect(initialViewLanguage(session)).toEqual({ language: 'es', needsTranslation: false })
+  })
+
+  it('opens a guest session without a picked language in the stored one', () => {
+    const session = makeSession({ role: 'guest', guest_language: null, target_language: 'de' })
+    expect(initialViewLanguage(session)).toEqual({ language: 'de', needsTranslation: false })
+  })
+
+  it("opens an owner's session in its stored language, never translating on landing", () => {
+    const session = makeSession({ role: 'owner', guest_language: 'fr', target_language: 'es' })
+    expect(initialViewLanguage(session)).toEqual({ language: 'es', needsTranslation: false })
+  })
+
+  it('falls back to the default language when nothing was ever stored', () => {
+    const session = makeSession({ role: 'owner', target_language: null })
+    expect(initialViewLanguage(session)).toEqual({ language: 'es', needsTranslation: false })
   })
 })

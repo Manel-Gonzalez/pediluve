@@ -339,6 +339,122 @@ whole view; a still-untranslated `original_text` is a legitimate result, not a b
 
 **Why:** No need for SSR or routing in v1 — it's a single-page tool. Vite's dev server is faster. Less boilerplate. Next.js would be overkill here.
 
+## Phase 5: QR code live viewer (KAN-50)
+
+**Context:** the original Phase 5 plan was TTS playback only. Partway through, a new idea landed:
+let anyone scan a QR code and watch a session's transcript translate live, in their own language, on
+their own phone, with no account - a much stronger portfolio demo than a solo screen recording.
+Approved scope for this work: **live viewing only** (a past/ended session isn't shareable this way),
+**no diarization/speaker separation** (out of scope, unrelated to this feature), and **TTS playback
+extended to the viewer** rather than staying owner-only. Six decisions shaped the implementation,
+labelled D1-D6 below since earlier planning notes and code comments (`routers/viewer_ws.py`,
+`services/live_rooms.py`, the migrations) refer to them by these labels.
+
+**D1 - a separate `/ws/view` endpoint, not a new message type on `/ws`.** `/ws`'s safety today is one
+gate (`self.user is None`) in front of every owner capability (STT spend, `set_target_language`,
+ending the session). Adding a "viewer" identity to that same handler would need a role check on
+every current *and future* branch there - one missed check is a privilege escalation. A separate
+handler (`routers/viewer_ws.py::ViewerConnectionHandler`) makes the boundary structural instead of a
+habit to remember.
+
+**D2 - the share token travels as the first WS message (`join_live`), never in the WS URL.** Same
+log-hygiene reasoning as `/ws`'s own `authenticate`/`join_session`. It's unavoidably in the *page*
+URL `/view/<token>` - that's the whole point of the QR code - so it's a bearer capability link by
+design: anyone who has the link can view, and the token is deliberately not distinguishable from
+"session isn't live right now" on a bad guess (`routers/viewer_ws.py`'s `LIVE_NOT_AVAILABLE_CLOSE_CODE`).
+
+**D3 - anonymous viewers never touch Postgres.** Everything a viewer sees comes from an in-memory
+`LiveRoom` (`services/live_rooms.py`), populated entirely by the *owner's own* connection: its own
+RLS-scoped `join_session` read, its own committed lines, its own translation calls. A token-to-room
+lookup is a plain dict read; only owner connections ever write to that registry. Rejected: a
+token-keyed RLS policy (makes query security depend on parsing a header, and grants the `anon` role
+table access it doesn't need), Supabase Realtime for viewers (needs `anon` SELECT on `sessions`/
+`messages`), a service-role read (breaks the "never use the service-role key" invariant this project
+holds everywhere else). The direct consequence, and the reason viewing is live-only for v1: a room
+only exists while at least one owner connection for its session is live.
+
+**D4 - fan-out is a queue, never inline.** One `LiveRoom` per session, refcounted by owner
+connections (closes when the last one disconnects). The owner's committed-transcript path calls
+`room.publish(...)` (a non-blocking `put_nowait`) right after its own Supabase save - never awaited,
+never doing translation or viewer I/O itself. A single room worker task drains that queue in order:
+computes the distinct viewer languages currently connected, translates only what's missing via
+`asyncio.gather` (one DeepL call per language, not per viewer), caches results per line, then sends
+to each viewer with a per-send timeout that drops a slow/failed one rather than blocking the rest.
+The owner's own translation seeds the cache for its own language, so a viewer who happens to match it
+costs nothing extra. Net effect: a stalled or malicious viewer connection can never slow down the
+owner's own transcript, and total DeepL spend per room is bounded by lines × distinct languages, not
+lines × viewers.
+
+**D5 - TTS cache keyed by `(message_id, language)`, not the one-`audio_path`-column design KAN-28
+originally sketched.** A viewer picks their own display language independently of the session's own
+`target_language`, so caching only the canonical language would let anyone holding a QR link trigger
+unbounded ElevenLabs spend just by switching languages and clicking play (lines × language switches ×
+viewers). The `message_audio` table (migration 006) and `services/tts_cache.py` fix the unit cost at
+one ElevenLabs call per `(message, language)` ever, cache hits after that. Storage objects live at a
+deterministic, owner-prefixed, flat-per-session path
+(`{owner_id}/{session_id}/{message_id}.{language}.mp3`, `services/storage.py`) so
+`delete_session_audio`'s cleanup on session delete (KAN-32) stays a single-level Storage `list`, and
+`storage.objects` RLS (migration 007) is a plain `auth.uid()` check against the path's first segment.
+A viewer's `request_audio` borrows the *live owner connection's own JWT* (`LiveRoom.owner_user`,
+refreshed on every re-authenticate) to actually write that cache - an anonymous viewer has no
+Supabase identity of its own to write with.
+
+**D6 - guests are added via a `SECURITY DEFINER` RPC, not a plain INSERT policy.** "Add to my
+sessions" (KAN-59-KAN-63) needed a `session_guests` row, but every browser already holds the anon key
+plus the signed-in user's own JWT and can call PostgREST directly - a policy shaped like `user_id =
+auth.uid()` would let *any* signed-in user add themselves as a guest to *any* session id, since a
+declarative RLS policy can't also verify the caller holds that session's actual `share_token`. Only a
+function can do both checks (`add_session_guest(share_token, target_language)`, migration 008):
+resolve the session from the token itself, then force `user_id = auth.uid()`, never a caller-supplied
+value. `search_path = ''` plus fully schema-qualified names close off the classic search-path-hijack
+attack on `SECURITY DEFINER` functions; `execute` is revoked from `anon`/`public` and granted only to
+`authenticated`. This is the deliberate, narrow exception to `CLAUDE.md`'s "don't add multi-tenant/
+org complexity" rule - one fixed, read-only relationship (a guest reads a session and its messages,
+nothing else), no roles table, no admin features. Rename/delete/target-language changes stay
+owner-only at the RLS layer regardless of what the application code does.
+
+**Not done in this pass:** diarization/speaker separation (never in scope for this feature - see
+Phase 6 below for the actual spike), TTS playback on the owner's own live/history views (`request_audio`
+only exists on `/ws/view`; adding it to owner `/ws` or as a new REST endpoint wasn't part of the
+approved scope for this week).
+
+## Phase 5: changes after real-device testing (KAN-50)
+
+The first real run (owner on a laptop, viewers on phones over the LAN) surfaced issues the unit tests
+couldn't, plus a few UX changes. Recorded here because each one changed a design assumption above.
+
+- **The owner records on `localhost`; the QR link uses `VITE_SHARE_BASE_URL`.** `getUserMedia` only
+  exists in a secure context (`localhost` or https), so an owner opening the app at its LAN IP has
+  no mic at all. But a QR code built from `localhost` sends the phone to itself. The share link's
+  base URL is therefore configurable (`lib/share.ts`) and set to the machine's LAN origin, while
+  the owner stays on `localhost`.
+- **Storage calls carry the user's JWT, not the anon key.** supabase-py builds `client.storage`
+  from `client.options.headers`, not from the PostgREST auth that `client_for` was setting, so
+  every upload ran as `anon` and hit the bucket's RLS. `client_for` now sets both. The fakes in
+  the tests had modelled the client wrongly, which is why only real Supabase caught it; a test
+  now asserts on a real client's Storage headers.
+- **A live room is seeded with the session's stored history.** A room started empty, so a viewer
+  who refreshed mid-session (or joined late) lost every earlier line. The owner's `join_session`
+  already reads the full history under its own RLS, so `LiveRoom.seed_history` loads it into the
+  room: still no viewer ever touches Postgres (D3). For the same reason a guest who saved a session
+  and left halfway sees the complete session afterwards: a guest row points at the live original,
+  never at a snapshot.
+- **The viewer shows only the translation**, since it's meant for phones. Its "Download
+  translation" builds the file client-side from lines already in memory, because an anonymous
+  viewer has no Supabase session to call the authenticated transcript endpoint with.
+  `SessionDetailPage` uses that endpoint instead.
+- **A guest's saved session opens in the guest's own language** (`session_guests.target_language`,
+  translated on demand as in Phase 4), not the owner's.
+- **"Listen live" reads new lines aloud as they arrive** (`hooks/useLiveListen.ts`). It starts from
+  the next line, not the backlog: reading everything said so far would leave the listener
+  permanently behind. Each line's audio is requested as soon as it's queued, so the next one is
+  generated while the current one plays. Per-line Play buttons are hidden while it's on, so a
+  manual tap can't cut into the queue. Playback goes through one reused `<audio>` element,
+  unlocked with a silent clip inside the tap that starts it, because iOS Safari blocks `play()`
+  calls that don't come from a user gesture.
+- **The backend runs with `--timeout-graceful-shutdown 3`.** On Windows, uvicorn hung forever at
+  "Shutting down" while a phone's `/ws/view` socket was open; the timeout bounds that wait.
+
 ## Future: persisting partial transcripts + manual edit (parked, Phase 6+)
 
 **Context:** Manel's idea, while verifying Phase 4 by hand: if you pause right as you're mid-sentence,

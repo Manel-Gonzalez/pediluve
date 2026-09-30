@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -29,6 +30,9 @@ def _session_row(**overrides):
         "target_language": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "ended_at": None,
+        "role": "owner",
+        "share_token": str(uuid.uuid4()),
+        "guest_language": None,
     }
     row.update(overrides)
     return row
@@ -254,6 +258,40 @@ def test_delete_session_with_a_non_uuid_id_is_404(authed):
     assert response.status_code == 404
 
 
+def test_delete_session_also_deletes_its_cached_audio(monkeypatch, authed):
+    calls = []
+
+    async def fake_delete_session_audio(user, owner_id, session_id):
+        calls.append((owner_id, session_id))
+
+    async def fake_delete_session(user, session_id):
+        return True
+
+    monkeypatch.setattr("routers.sessions.storage.delete_session_audio", fake_delete_session_audio)
+    monkeypatch.setattr("routers.sessions.supabase.delete_session", fake_delete_session)
+
+    session_id = str(uuid.uuid4())
+    response = client.delete(f"/api/sessions/{session_id}")
+
+    assert response.status_code == 204
+    assert calls == [(USER.id, session_id)]
+
+
+def test_delete_session_succeeds_even_if_audio_cleanup_fails(monkeypatch, authed):
+    async def failing_delete_session_audio(user, owner_id, session_id):
+        raise RuntimeError("Storage is down")
+
+    async def fake_delete_session(user, session_id):
+        return True
+
+    monkeypatch.setattr("routers.sessions.storage.delete_session_audio", failing_delete_session_audio)
+    monkeypatch.setattr("routers.sessions.supabase.delete_session", fake_delete_session)
+
+    response = client.delete(f"/api/sessions/{uuid.uuid4()}")
+
+    assert response.status_code == 204
+
+
 # ── POST /api/sessions/{id}/translate ────────────────────────────────────
 
 
@@ -387,3 +425,219 @@ def test_translate_session_with_no_messages_returns_an_empty_list_and_does_not_c
 
     assert response.status_code == 200
     assert response.json()["translations"] == []
+
+
+# ── POST /api/shared/guest ───────────────────────────────────────────────
+
+
+def test_add_guest_returns_the_newly_accessible_session(monkeypatch, authed):
+    row = _session_row(
+        role="guest", guest_language="fr", share_token="share-token-123", message_count=0
+    )
+    calls = []
+
+    async def fake_add_session_guest(user, share_token, target_language):
+        calls.append((share_token, target_language))
+
+    async def fake_get_session_by_share_token(user, share_token):
+        assert share_token == "share-token-123"
+        return row
+
+    monkeypatch.setattr("routers.sessions.supabase.add_session_guest", fake_add_session_guest)
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_by_share_token", fake_get_session_by_share_token
+    )
+
+    response = client.post(
+        "/api/shared/guest", json={"share_token": "share-token-123", "target_language": "fr"}
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["id"] == row["id"]
+    assert body["role"] == "guest"
+    assert body["guest_language"] == "fr"
+    assert calls == [("share-token-123", "fr")]
+
+
+def test_add_guest_with_an_unknown_token_is_404(monkeypatch, authed):
+    async def failing_add_session_guest(user, share_token, target_language):
+        raise Exception("Session not found")
+
+    monkeypatch.setattr("routers.sessions.supabase.add_session_guest", failing_add_session_guest)
+
+    response = client.post("/api/shared/guest", json={"share_token": "does-not-exist"})
+
+    assert response.status_code == 404
+
+
+def test_add_guest_without_authorization_is_401():
+    response = client.post("/api/shared/guest", json={"share_token": "x"})
+    assert response.status_code == 401
+
+
+# ── DELETE /api/sessions/{id}/guest ──────────────────────────────────────
+
+
+def test_remove_guest_returns_204(monkeypatch, authed):
+    async def fake_remove_session_guest(user, session_id):
+        return True
+
+    monkeypatch.setattr("routers.sessions.supabase.remove_session_guest", fake_remove_session_guest)
+
+    response = client.delete(f"/api/sessions/{uuid.uuid4()}/guest")
+
+    assert response.status_code == 204
+
+
+def test_remove_guest_with_no_matching_membership_is_404(monkeypatch, authed):
+    async def fake_remove_session_guest(user, session_id):
+        return False
+
+    monkeypatch.setattr("routers.sessions.supabase.remove_session_guest", fake_remove_session_guest)
+
+    response = client.delete(f"/api/sessions/{uuid.uuid4()}/guest")
+
+    assert response.status_code == 404
+
+
+def test_remove_guest_with_a_non_uuid_id_is_404(authed):
+    response = client.delete("/api/sessions/not-a-uuid/guest")
+    assert response.status_code == 404
+
+
+# ── GET /api/sessions/{id}/transcript ────────────────────────────────────
+
+
+def test_download_transcript_with_no_target_language_uses_the_stored_translation(monkeypatch, authed):
+    row = _session_row(title="Standup")
+    row["messages"] = [
+        {
+            "id": "m1",
+            "sequence": 0,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "original_text": "hola",
+            "translated_text": "hello",
+            "target_language": "en",
+        },
+        {
+            "id": "m2",
+            "sequence": 1,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "original_text": "mundo",
+            "translated_text": None,
+            "target_language": None,
+        },
+    ]
+
+    async def fake_get_session_with_messages(user, session_id):
+        return row
+
+    async def unexpected_translate_many(*args, **kwargs):
+        raise AssertionError("deepl.translate_many should not be called with no target_language")
+
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_with_messages", fake_get_session_with_messages
+    )
+    monkeypatch.setattr("routers.sessions.deepl.translate_many", unexpected_translate_many)
+
+    response = client.get(f"/api/sessions/{row['id']}/transcript")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/plain; charset=utf-8"
+    assert response.text == "hola\n→ hello\n\nmundo\n"
+
+
+def test_download_transcript_with_a_target_language_re_translates(monkeypatch, authed):
+    row = _session_row(title="Standup")
+    row["messages"] = [
+        {
+            "id": "m1",
+            "sequence": 0,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "original_text": "hola",
+            "translated_text": "hello",
+            "target_language": "en",
+        }
+    ]
+
+    async def fake_get_session_with_messages(user, session_id):
+        return row
+
+    async def fake_translate_many(texts, target_language):
+        assert target_language == "fr"
+        return [f"[fr] {text}" for text in texts]
+
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_with_messages", fake_get_session_with_messages
+    )
+    monkeypatch.setattr("routers.sessions.deepl.translate_many", fake_translate_many)
+
+    response = client.get(f"/api/sessions/{row['id']}/transcript?target_language=fr")
+
+    assert response.status_code == 200
+    assert "[fr] hola" in response.text
+
+
+def test_download_transcript_sets_content_disposition_with_the_title(monkeypatch, authed):
+    row = _session_row(title="Café meeting")
+    row["messages"] = []
+
+    async def fake_get_session_with_messages(user, session_id):
+        return row
+
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_with_messages", fake_get_session_with_messages
+    )
+
+    response = client.get(f"/api/sessions/{row['id']}/transcript")
+
+    disposition = response.headers["content-disposition"]
+    assert 'filename="Caf meeting.txt"' in disposition
+    assert "filename*=UTF-8''Caf%C3%A9%20meeting.txt" in disposition
+
+
+def test_download_transcript_strips_cr_lf_and_quotes_from_the_ascii_filename(monkeypatch, authed):
+    # A title's own validator only trims leading/trailing whitespace - an
+    # embedded CR/LF/quote (still valid ASCII, so not stripped by the
+    # encode("ascii", "ignore") step) must never reach the header raw.
+    row = _session_row(title='evil\r\nX-Injected: 1" title')
+    row["messages"] = []
+
+    async def fake_get_session_with_messages(user, session_id):
+        return row
+
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_with_messages", fake_get_session_with_messages
+    )
+
+    response = client.get(f"/api/sessions/{row['id']}/transcript")
+
+    assert response.status_code == 200
+    disposition = response.headers["content-disposition"]
+    assert "\r" not in disposition
+    assert "\n" not in disposition
+    match = re.search(r'filename="([^;]*)"; filename\*=', disposition)
+    assert match is not None
+    assert '"' not in match.group(1)
+
+
+def test_download_transcript_with_an_unsupported_language_is_400(authed):
+    response = client.get(f"/api/sessions/{uuid.uuid4()}/transcript?target_language=xx")
+    assert response.status_code == 400
+
+
+def test_download_transcript_with_an_unknown_session_is_404(monkeypatch, authed):
+    async def fake_get_session_with_messages(user, session_id):
+        return None
+
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_with_messages", fake_get_session_with_messages
+    )
+    response = client.get(f"/api/sessions/{uuid.uuid4()}/transcript")
+    assert response.status_code == 404
+
+
+def test_download_transcript_without_authorization_is_401():
+    response = client.get(f"/api/sessions/{uuid.uuid4()}/transcript")
+    assert response.status_code == 401

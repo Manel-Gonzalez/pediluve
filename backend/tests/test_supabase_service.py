@@ -15,6 +15,7 @@ class FakeQuery:
         self.store = store
         self._op = None
         self._payload = None
+        self._on_conflict = None
         self._filters = {}
         self._in_filters = {}
         self._order_column = None
@@ -24,6 +25,12 @@ class FakeQuery:
     def insert(self, payload):
         self._op = "insert"
         self._payload = payload
+        return self
+
+    def upsert(self, payload, on_conflict=""):
+        self._op = "upsert"
+        self._payload = payload
+        self._on_conflict = [c.strip() for c in on_conflict.split(",") if c.strip()]
         return self
 
     def update(self, payload):
@@ -79,6 +86,25 @@ class FakeQuery:
             }
             rows.append(row)
             return FakeResult([row])
+        if self._op == "upsert":
+            existing = next(
+                (
+                    row
+                    for row in rows
+                    if all(row.get(c) == self._payload.get(c) for c in self._on_conflict)
+                ),
+                None,
+            )
+            if existing is not None:
+                existing.update(self._payload)
+                return FakeResult([existing])
+            row = {
+                "created_at": f"{len(rows):020d}",
+                **self._payload,
+                "id": f"{self.table_name}-{len(rows) + 1}",
+            }
+            rows.append(row)
+            return FakeResult([row])
         if self._op == "update":
             matched = self._matching_rows(rows)
             for row in matched:
@@ -110,14 +136,29 @@ class FakePostgrest:
         self.closed = True
 
 
+class FakeRpcCall:
+    def __init__(self, calls, name, params):
+        self._calls = calls
+        self.name = name
+        self.params = params
+
+    async def execute(self):
+        self._calls.append((self.name, self.params))
+        return FakeResult(None)
+
+
 class FakeAsyncClientForToken:
     def __init__(self, store, access_token):
         self.store = store
         self.access_token = access_token
         self.postgrest = FakePostgrest()
+        self.rpc_calls: list[tuple[str, dict]] = []
 
     def table(self, name):
         return FakeQuery(name, self.store)
+
+    def rpc(self, name, params):
+        return FakeRpcCall(self.rpc_calls, name, params)
 
 
 def user(access_token="tok-a", id="user-1", email="a@example.com"):
@@ -159,9 +200,14 @@ async def test_client_for_authenticates_the_postgrest_client_with_the_token(monk
         def auth(self, token):
             self.token = token
 
+    class FakeOptions:
+        def __init__(self):
+            self.headers = {}
+
     class FakeRealClient:
         def __init__(self):
             self.postgrest = FakeRealPostgrest()
+            self.options = FakeOptions()
 
     created = FakeRealClient()
 
@@ -184,9 +230,14 @@ async def test_client_for_returns_a_distinct_client_per_call(monkeypatch):
             pass
 
     async def fake_create_async_client(url, key):
+        class FakeOptions:
+            def __init__(self):
+                self.headers = {}
+
         class FakeRealClient:
             def __init__(self):
                 self.postgrest = FakeRealPostgrest()
+                self.options = FakeOptions()
 
         return FakeRealClient()
 
@@ -198,6 +249,20 @@ async def test_client_for_returns_a_distinct_client_per_call(monkeypatch):
     second = await supabase.client_for("token-b")
 
     assert first is not second
+
+
+async def test_client_for_authenticates_the_storage_client_with_the_token(monkeypatch):
+    # Uses the real supabase-py client (constructing it makes no network
+    # call): the storage sub-client is built lazily from options.headers,
+    # not from the postgrest client, so a fake can't catch it still
+    # carrying the anon key - which made every Storage upload run as
+    # `anon` and fail migration 007's auth.uid()-based RLS.
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_KEY", "anon-key")
+
+    client = await supabase.client_for("user-token")
+
+    assert client.storage.session.headers["Authorization"] == "Bearer user-token"
 
 
 async def create_session_id(user_obj, **kwargs):
@@ -267,6 +332,62 @@ async def test_save_message_accepts_translated_text_and_target_language(fake_cli
     saved = fake_client.store["messages"][0]
     assert saved["translated_text"] == "hola"
     assert saved["target_language"] == "es"
+
+
+async def test_save_message_returns_the_inserted_row_with_its_id(fake_client):
+    session_id = await create_session_id(user())
+    row = await supabase.save_message(user(), session_id, 0, "hello")
+    assert row["id"] is not None
+    assert row["original_text"] == "hello"
+
+
+async def test_create_message_audio_inserts_and_returns_the_row(fake_client):
+    session_id = await create_session_id(user())
+    message = await supabase.save_message(user(), session_id, 0, "hello")
+
+    row = await supabase.create_message_audio(user(), message["id"], "fr", "owner/session/msg.fr.mp3")
+
+    assert row["message_id"] == message["id"]
+    assert row["language"] == "fr"
+    assert row["storage_path"] == "owner/session/msg.fr.mp3"
+
+
+async def test_create_message_audio_upserts_on_a_concurrent_duplicate(fake_client):
+    # Simulates two concurrent request_audio calls for the same
+    # (message_id, language) racing a cache miss (services/tts_cache.py has
+    # no locking around that window) - the second call must not raise on
+    # migration 006's unique(message_id, language) constraint.
+    session_id = await create_session_id(user())
+    message = await supabase.save_message(user(), session_id, 0, "hello")
+
+    first = await supabase.create_message_audio(user(), message["id"], "fr", "path-a.mp3")
+    second = await supabase.create_message_audio(user(), message["id"], "fr", "path-b.mp3")
+
+    assert first["message_id"] == second["message_id"] == message["id"]
+    rows = [
+        row
+        for row in fake_client.store["message_audio"]
+        if row["message_id"] == message["id"] and row["language"] == "fr"
+    ]
+    assert len(rows) == 1
+    assert rows[0]["storage_path"] == "path-b.mp3"
+
+
+async def test_get_message_audio_returns_none_when_not_cached(fake_client):
+    session_id = await create_session_id(user())
+    message = await supabase.save_message(user(), session_id, 0, "hello")
+
+    assert await supabase.get_message_audio(user(), message["id"], "fr") is None
+
+
+async def test_get_message_audio_returns_the_matching_row(fake_client):
+    session_id = await create_session_id(user())
+    message = await supabase.save_message(user(), session_id, 0, "hello")
+    await supabase.create_message_audio(user(), message["id"], "fr", "owner/session/msg.fr.mp3")
+    await supabase.create_message_audio(user(), message["id"], "de", "owner/session/msg.de.mp3")
+
+    row = await supabase.get_message_audio(user(), message["id"], "fr")
+    assert row["storage_path"] == "owner/session/msg.fr.mp3"
 
 
 async def test_update_session_target_language_updates_the_matching_session(fake_client):
@@ -354,6 +475,38 @@ async def test_list_sessions_with_no_sessions_returns_an_empty_list(fake_client)
     assert has_more is False
 
 
+async def test_list_sessions_marks_owned_sessions_with_role_owner(fake_client):
+    await supabase.create_session(user(), title="Mine")
+    rows, _has_more = await supabase.list_sessions(user(), limit=20, offset=0)
+    assert rows[0]["role"] == "owner"
+    assert rows[0]["guest_language"] is None
+
+
+async def test_list_sessions_prefers_owner_role_even_with_a_stray_guest_row(fake_client):
+    # e.g. an owner scanning their own QR code while signed in - ownership
+    # must win, since it's what actually governs rename/delete/etc.
+    session = await supabase.create_session(user(), title="Mine")
+    fake_client.store.setdefault("session_guests", []).append(
+        {"session_id": session["id"], "user_id": "user-1", "target_language": "fr"}
+    )
+    rows, _has_more = await supabase.list_sessions(user(), limit=20, offset=0)
+    assert rows[0]["role"] == "owner"
+    assert rows[0]["guest_language"] is None
+
+
+async def test_list_sessions_marks_guest_sessions_with_role_and_language(fake_client):
+    session = await supabase.create_session(user(access_token="tok-owner", id="owner-1"), title="Theirs")
+    fake_client.store.setdefault("session_guests", []).append(
+        {"session_id": session["id"], "user_id": "user-1", "target_language": "fr"}
+    )
+    # RLS would be what actually makes this row visible to the guest in
+    # production; the fake store has no RLS, so this test only exercises
+    # the role/guest_language annotation, not visibility itself.
+    rows, _has_more = await supabase.list_sessions(user(access_token="tok-a", id="user-1"), limit=20, offset=0)
+    assert rows[0]["role"] == "guest"
+    assert rows[0]["guest_language"] == "fr"
+
+
 async def test_get_session_with_messages_returns_messages_sorted_by_sequence(fake_client):
     session = await supabase.create_session(user(), title="Standup")
     await supabase.save_message(user(), session["id"], 1, "second")
@@ -367,6 +520,49 @@ async def test_get_session_with_messages_returns_messages_sorted_by_sequence(fak
 
 async def test_get_session_with_messages_returns_none_for_an_unknown_id(fake_client):
     assert await supabase.get_session_with_messages(user(), "does-not-exist") is None
+
+
+async def test_get_session_by_share_token_returns_the_matching_session(fake_client):
+    # The fake insert doesn't simulate the real `default gen_random_uuid()`
+    # on sessions.share_token, so it's set directly here.
+    session = await supabase.create_session(user(), title="Standup")
+    fake_client.store["sessions"][0]["share_token"] = "share-token-abc"
+
+    row = await supabase.get_session_by_share_token(user(), "share-token-abc")
+
+    assert row["id"] == session["id"]
+    assert row["message_count"] == 0
+    assert row["role"] == "owner"
+
+
+async def test_get_session_by_share_token_returns_none_for_an_unknown_token(fake_client):
+    assert await supabase.get_session_by_share_token(user(), "does-not-exist") is None
+
+
+async def test_add_session_guest_calls_the_rpc_with_the_token_and_language(fake_client):
+    await supabase.add_session_guest(user(), "share-token-123", "fr")
+
+    client = fake_client.by_token["tok-a"]
+    assert client.rpc_calls == [
+        ("add_session_guest", {"share_token": "share-token-123", "target_language": "fr"})
+    ]
+    assert client.postgrest.closed is True
+
+
+async def test_remove_session_guest_deletes_the_matching_row(fake_client):
+    fake_client.store.setdefault("session_guests", []).append(
+        {"session_id": "session-1", "user_id": "user-1", "target_language": "fr"}
+    )
+
+    removed = await supabase.remove_session_guest(user(access_token="tok-a", id="user-1"), "session-1")
+
+    assert removed is True
+    assert fake_client.store["session_guests"] == []
+
+
+async def test_remove_session_guest_with_no_matching_row_returns_false(fake_client):
+    removed = await supabase.remove_session_guest(user(), "does-not-exist")
+    assert removed is False
 
 
 async def test_rename_session_updates_the_title_and_returns_the_row(fake_client):

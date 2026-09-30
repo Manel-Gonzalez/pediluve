@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from routers.me import router as me_router
 from routers.sessions import router as sessions_router
+from routers.viewer_ws import router as viewer_ws_router
 from routers.ws import router as ws_router
 
 load_dotenv()
@@ -24,6 +25,7 @@ app.add_middleware(
 )
 
 app.include_router(ws_router)
+app.include_router(viewer_ws_router)
 app.include_router(me_router)
 app.include_router(sessions_router)
 

@@ -3,9 +3,15 @@ import type { Session } from '@supabase/supabase-js'
 import { Link, useParams } from 'react-router-dom'
 import { TranscriptRow } from '../components/TranscriptRow'
 import { useAuth } from '../hooks/useAuth'
-import { ApiError, getSession, translateSession } from '../lib/api'
+import { ApiError, downloadTranscript, getSession, translateSession } from '../lib/api'
+import { saveBlob, transcriptFilename } from '../lib/download'
 import { DEFAULT_TARGET_LANGUAGE, SUPPORTED_LANGUAGES } from '../lib/languageControls'
-import type { SessionDetail } from '../lib/types'
+import { initialViewLanguage } from '../lib/sessions'
+import type { SessionDetail, TranslateResponse } from '../lib/types'
+
+function toTranslationMap(response: TranslateResponse): Map<string, string | null> {
+  return new Map(response.translations.map((t) => [t.message_id, t.translated_text]))
+}
 
 export function SessionDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -33,6 +39,8 @@ function SessionDetailPageContent({ session, sessionId }: { session: Session; se
   const [translations, setTranslations] = useState<Map<string, string | null> | null>(null)
   const [translating, setTranslating] = useState(false)
   const [translateError, setTranslateError] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
 
   useEffect(() => {
     // Guards a response from a superseded fetch (id changed, but the
@@ -44,7 +52,25 @@ function SessionDetailPageContent({ session, sessionId }: { session: Session; se
       .then((row) => {
         if (cancelled) return
         setDetail(row)
-        setViewLanguage(row.target_language ?? DEFAULT_TARGET_LANGUAGE)
+        const { language, needsTranslation } = initialViewLanguage(row)
+        setViewLanguage(language)
+        // Only ever true for a guest who picked their own language when
+        // saving the session - the one case landing here spends a DeepL
+        // call, since that's the language they asked to read it in.
+        if (!needsTranslation) return
+        setTranslating(true)
+        translateSession(session, sessionId, language)
+          .then((response) => {
+            if (!cancelled) setTranslations(toTranslationMap(response))
+          })
+          .catch((err: unknown) => {
+            if (!cancelled) {
+              setTranslateError(err instanceof ApiError ? err.detail : 'Could not translate session')
+            }
+          })
+          .finally(() => {
+            if (!cancelled) setTranslating(false)
+          })
       })
       .catch((err: unknown) => {
         if (cancelled) return
@@ -77,11 +103,28 @@ function SessionDetailPageContent({ session, sessionId }: { session: Session; se
     setTranslating(true)
     try {
       const response = await translateSession(session, sessionId, language)
-      setTranslations(new Map(response.translations.map((t) => [t.message_id, t.translated_text])))
+      setTranslations(toTranslationMap(response))
     } catch (err) {
       setTranslateError(err instanceof ApiError ? err.detail : 'Could not translate session')
     } finally {
       setTranslating(false)
+    }
+  }
+
+  // Downloads what's on screen: the on-demand translation if one is being
+  // shown, otherwise each message's own stored translation (null language).
+  const handleDownload = async () => {
+    if (!detail) return
+    const language = translations ? viewLanguage : null
+    setDownloading(true)
+    setDownloadError(null)
+    try {
+      const blob = await downloadTranscript(session, sessionId, language)
+      saveBlob(blob, transcriptFilename(detail.title, language ?? detail.target_language))
+    } catch (err) {
+      setDownloadError(err instanceof ApiError ? err.detail : 'Could not download transcript')
+    } finally {
+      setDownloading(false)
     }
   }
 
@@ -142,8 +185,16 @@ function SessionDetailPageContent({ session, sessionId }: { session: Session; se
           </select>
         </label>
         {translating && <span className="text-sm italic text-ink-500">Translating…</span>}
+        <button
+          onClick={handleDownload}
+          disabled={downloading || translating || detail.messages.length === 0}
+          className="ml-auto self-end rounded border border-ink-200 px-3 py-1.5 text-sm font-medium text-ink-900 hover:border-ink-300 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {downloading ? 'Downloading…' : 'Download transcript'}
+        </button>
       </div>
       {translateError && <p className="text-red-600">{translateError}</p>}
+      {downloadError && <p className="text-red-600">{downloadError}</p>}
 
       <div className="my-4 flex flex-col gap-3">
         {detail.messages.map((message) => (

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -30,6 +31,15 @@ class SessionSummary(BaseModel):
     target_language: str | None
     title: str | None
     message_count: int
+    # "owner" for the account that created it, "guest" for one that added it
+    # via a share link (KAN-59/KAN-60) - a guest can read but never rename/
+    # delete/change the target language (enforced by RLS, not here).
+    role: Literal["owner", "guest"]
+    share_token: str
+    # The guest's own preferred display language for this session, distinct
+    # from target_language (the owner's) - null for a role="owner" row, or
+    # for a guest who hasn't picked one yet.
+    guest_language: str | None = None
 
 
 class SessionListResponse(BaseModel):
@@ -48,6 +58,11 @@ class MessageRecord(BaseModel):
 
 class SessionDetail(SessionSummary):
     messages: list[MessageRecord]
+
+
+class AddGuestRequest(BaseModel):
+    share_token: str
+    target_language: str | None = None
 
 
 class TranslateRequest(BaseModel):

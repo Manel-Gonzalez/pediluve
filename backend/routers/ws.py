@@ -20,7 +20,7 @@ from models.messages import (
     StartTranscription,
     Transcript,
 )
-from services import deepl, supabase
+from services import deepl, live_rooms, supabase
 from services.auth import AuthenticatedUser, AuthError, AuthServiceUnavailable, verify_access_token
 from services.elevenlabs import RealtimeTranscriptionSession
 
@@ -67,6 +67,13 @@ class ConnectionHandler:
         # this per recording would silently drop every earlier take's rows
         # from the screen the next time the language changes.
         self.committed_texts: list[str] = []
+        # Set on a successful join_session, cleared on disconnect (KAN-50's
+        # QR live viewer) - the in-memory room anonymous /ws/view viewers
+        # attach to. Acquired once per visit (survives pause/resume, same
+        # lifecycle as db_session_id), released only when this connection's
+        # own session actually ends (_end_db_session), not on a pause.
+        self.live_room: live_rooms.LiveRoom | None = None
+        self.share_token: str | None = None
         # Bumped on every retranslation-triggering language change; a background
         # retranslation checks it's still current before sending its result, so
         # a fast second change can't be clobbered by a slower first one that
@@ -148,6 +155,12 @@ class ConnectionHandler:
         # fresh rather than a value captured earlier, so an in-flight
         # save/update picks up the new token if it hasn't reached Supabase yet.
         self.user = authenticated_user
+        if self.live_room is not None:
+            # Keeps the room's copy current across a token refresh - a
+            # viewer's request_audio (KAN-58) borrows whatever's here to
+            # write the TTS cache, so a stale/expired token here would fail
+            # that write with no way for the owner to see why.
+            self.live_room.owner_user = authenticated_user
         await self.send(Authenticated(user_id=authenticated_user.id).model_dump())
 
     async def _handle_text_message(self, raw: str) -> None:
@@ -261,12 +274,30 @@ class ConnectionHandler:
             await self._reject("Session not found", code=SESSION_NOT_FOUND_CLOSE_CODE)
             return
 
+        # RLS doesn't (yet) rule this out on its own - once guest RLS lands
+        # (KAN-59) a row can be visible to a non-owner too, and the live/
+        # recording owner view must never be reachable that way. Reported
+        # identically to "doesn't exist", same as every other join_session
+        # failure - a guest gets no signal either way.
+        if row["user_id"] != self.user.id:
+            await self._reject("Session not found", code=SESSION_NOT_FOUND_CLOSE_CODE)
+            return
+
         messages = row["messages"]
         self.db_session_id = row["id"]
         self.sequence = max((message["sequence"] for message in messages), default=-1) + 1
         self.committed_texts = [message["original_text"] for message in messages]
         self.source_language = row["source_language"]
         self.target_language = row["target_language"]
+        self.share_token = row["share_token"]
+        self.live_room = live_rooms.registry.acquire(
+            self.share_token,
+            session_id=row["id"],
+            title=row["title"],
+            source_language=row["source_language"],
+        )
+        self.live_room.owner_user = self.user
+        self.live_room.seed_history(messages)
 
         await self.send(
             SessionJoined(
@@ -282,6 +313,7 @@ class ConnectionHandler:
                     )
                     for message in messages
                 ],
+                share_token=self.share_token,
             ).model_dump()
         )
 
@@ -331,6 +363,9 @@ class ConnectionHandler:
         self.relay_task = asyncio.create_task(self._relay_transcripts(session))
         self.transcript_worker_task = asyncio.create_task(self._process_transcript_queue())
 
+        if self.live_room is not None:
+            await self.live_room.broadcast_status("recording")
+
     async def _pause_transcription(self) -> None:
         # Winds down the current recording take only - db_session_id (and
         # everything seeded from it: sequence, committed_texts, source/target
@@ -351,6 +386,9 @@ class ConnectionHandler:
         self.relay_task = None
         self.transcript_queue = None
         self.transcript_worker_task = None
+
+        if self.live_room is not None:
+            await self.live_room.broadcast_status("paused")
 
     async def _relay_transcripts(self, session: RealtimeTranscriptionSession) -> None:
         async for event in session.events():
@@ -399,12 +437,13 @@ class ConnectionHandler:
             except Exception:
                 logger.exception("Could not translate transcript")
 
+        message_id: str | None = None
         if self.db_session_id is not None:
             try:
                 # self.user read here, not captured earlier in this method - if a
                 # re-authenticate swapped it while the DeepL call above was in
                 # flight, this save uses the new token, per KAN-18.
-                await supabase.save_message(
+                saved = await supabase.save_message(
                     self.user,
                     self.db_session_id,
                     self.sequence,
@@ -412,9 +451,18 @@ class ConnectionHandler:
                     translated_text=translated_text,
                     target_language=target_language,
                 )
+                message_id = saved["id"]
                 self.sequence += 1
             except Exception:
                 logger.exception("Could not save message to Supabase")
+
+        if self.live_room is not None:
+            # Never awaited: publish() only queues, so a slow/failing
+            # viewer-side translation or send can never stall this worker
+            # (see services/live_rooms.py and docs/decisions.md's D4).
+            # message_id stays None if the save above failed - that line
+            # just can't offer playback (KAN-58), nothing else changes.
+            self.live_room.publish(text, target_language, translated_text, message_id=message_id)
 
         # Persisted before sending, not after: on a real disconnect, send()
         # raises WebSocketDisconnect once the socket write actually fails,
@@ -501,6 +549,12 @@ class ConnectionHandler:
         except Exception:
             logger.exception("Could not end Supabase session")
         self.db_session_id = None
+
+        if self.live_room is not None:
+            await self.live_room.broadcast_status("ended")
+            await live_rooms.registry.release(self.share_token)
+            self.live_room = None
+            self.share_token = None
 
     async def _pause_and_end(self) -> None:
         await self._pause_transcription()
