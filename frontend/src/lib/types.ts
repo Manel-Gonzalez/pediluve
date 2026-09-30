@@ -171,6 +171,8 @@ export type LiveJoinedMessage = {
   source_language: string | null
   target_language: string
   state: LiveState
+  // Whether the owner is mid-sentence right now (KAN-65).
+  speaking: boolean
   lines: LiveLineData[]
 }
 
@@ -193,6 +195,14 @@ export type LiveStatusMessage = {
   state: LiveState
 }
 
+// KAN-65: sent only when it changes, in order with live_line - true once
+// the owner starts a sentence, false after its line is sent (or it was
+// just noise, or recording paused).
+export type LiveSpeakingMessage = {
+  type: 'live_speaking'
+  speaking: boolean
+}
+
 export type AudioReadyMessage = {
   type: 'audio_ready'
   index: number
@@ -212,6 +222,7 @@ export type ViewerServerMessage =
   | LiveLineMessage
   | LiveLinesRetranslatedMessage
   | LiveStatusMessage
+  | LiveSpeakingMessage
   | AudioReadyMessage
   | AudioFailedMessage
   | ErrorMessage
