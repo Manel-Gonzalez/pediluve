@@ -13,6 +13,34 @@ logger = logging.getLogger(__name__)
 REALTIME_URL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
 TTS_API_URL = "https://api.elevenlabs.io/v1/text-to-speech"
 
+# How long a pause ends a sentence (ElevenLabs' VAD commit). Their default is
+# 1.5 s, which made every line feel late; 1.0 s still rides out a half-second
+# hesitation. ElevenLabs accepts 0.3-3.0.
+DEFAULT_VAD_SILENCE_SECS = 1.0
+_VAD_SILENCE_RANGE = (0.3, 3.0)
+
+
+def _vad_silence_secs() -> float:
+    raw = os.environ.get("ELEVENLABS_VAD_SILENCE_SECS", "").strip()
+    if not raw:
+        return DEFAULT_VAD_SILENCE_SECS
+    low, high = _VAD_SILENCE_RANGE
+    try:
+        value = float(raw)
+    except ValueError:
+        value = None
+    if value is None or not low <= value <= high:
+        raise ValueError(f"ELEVENLABS_VAD_SILENCE_SECS must be a number between {low} and {high}, got {raw!r}")
+    return value
+
+
+def realtime_url(audio_format: str) -> str:
+    return (
+        f"{REALTIME_URL}?model_id=scribe_v2_realtime"
+        f"&audio_format={audio_format}&commit_strategy=vad"
+        f"&vad_silence_threshold_secs={_vad_silence_secs()}"
+    )
+
 
 class RealtimeTranscriptionSession:
     def __init__(self) -> None:
@@ -20,12 +48,8 @@ class RealtimeTranscriptionSession:
 
     async def connect(self, audio_format: str = "pcm_16000") -> None:
         api_key = os.environ["ELEVENLABS_API_KEY"]
-        url = (
-            f"{REALTIME_URL}?model_id=scribe_v2_realtime"
-            f"&audio_format={audio_format}&commit_strategy=vad"
-        )
         self._connection = await websockets.connect(
-            url, additional_headers={"xi-api-key": api_key}
+            realtime_url(audio_format), additional_headers={"xi-api-key": api_key}
         )
 
     async def send_audio(self, pcm_bytes: bytes) -> None:
