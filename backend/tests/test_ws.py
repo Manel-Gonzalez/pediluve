@@ -1483,3 +1483,59 @@ def test_publishing_to_the_room_never_blocks_saving_or_sending_the_owners_own_tr
 
     saved = [m for m in fake_supabase.messages if m["session_id"] == session_id]
     assert [m["original_text"] for m in saved] == ["hola"]
+
+
+def test_end_to_end_a_real_viewer_socket_receives_the_owners_committed_transcript(
+    monkeypatch, joined_ws, fake_supabase
+):
+    # Exercises the full path through a real /ws/view connection (KAN-55),
+    # not a FakeViewer - owner /ws and viewer /ws/view are two independent
+    # endpoints (docs/decisions.md D1) meeting only through the LiveRoom
+    # registry.
+    async def fake_translate(text, target_language):
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", fake_translate)
+
+    canned = [{"message_type": "committed_transcript", "text": "hola"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with joined_ws() as (owner_ws, session_id):
+        share_token = fake_supabase.sessions[session_id]["share_token"]
+
+        with client.websocket_connect("/ws/view") as viewer_ws:
+            viewer_ws.send_json(
+                {"type": "join_live", "share_token": share_token, "target_language": "fr"}
+            )
+            joined = viewer_ws.receive_json()
+            assert joined == {
+                "type": "live_joined",
+                "title": "Test session",
+                "source_language": None,
+                "target_language": "fr",
+                "state": "paused",
+                "lines": [],
+            }
+
+            owner_ws.send_json({"type": "start_transcription"})
+            assert viewer_ws.receive_json() == {"type": "live_status", "state": "recording"}
+            assert owner_ws.receive_json() == {
+                "type": "transcript",
+                "original_text": "hola",
+                "translated_text": None,
+                "target_language": None,
+            }
+            assert viewer_ws.receive_json() == {
+                "type": "live_line",
+                "index": 0,
+                "original_text": "hola",
+                "translated_text": "[fr] hola",
+                "target_language": "fr",
+            }
+
+            owner_ws.send_json({"type": "stop_transcription"})
+            assert viewer_ws.receive_json() == {"type": "live_status", "state": "paused"}
+    # (the "ended" broadcast on owner disconnect is covered separately by
+    # test_disconnect_broadcasts_ended_status_and_releases_the_room, which
+    # doesn't need to juggle two real sockets' close ordering to observe it)
