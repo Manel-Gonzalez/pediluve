@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom'
 import { ApiError, deleteSession, removeGuestSession, renameSession } from '../lib/api'
 import { sessionPath } from '../lib/routes'
 import { validateSessionTitle } from '../lib/sessionTitle'
+import { relativeTime } from '../lib/relativeTime'
 import { deleteConfirmationText, formatSessionTitle } from '../lib/sessions'
 import type { SessionSummary } from '../lib/types'
 import { ConfirmDialog } from './ConfirmDialog'
@@ -108,7 +109,7 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
   }
 
   return (
-    <li className="flex items-center justify-between gap-4 rounded-lg border border-line p-4 transition-shadow hover:shadow-md hover:border-primary/40">
+    <li className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-subtle/60">
       {isEditing ? (
         <div className="flex flex-1 flex-col gap-1">
           <div className="flex items-center gap-1">
@@ -136,21 +137,27 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
           {error && <span className="text-sm text-danger">{error}</span>}
         </div>
       ) : (
-        <Link to={sessionPath(item.id)} className="flex flex-col gap-1 text-inherit no-underline">
-          <span className="flex items-center gap-2 font-semibold text-fg">
-            {formatSessionTitle(item)}
+        <Link to={sessionPath(item.id)} className="flex min-w-0 flex-1 flex-col gap-1 rounded-md text-inherit no-underline">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate font-medium text-fg">{formatSessionTitle(item)}</span>
             {item.role === 'guest' && (
-              <span className="inline-block rounded bg-highlight px-1.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-highlight-fg">
+              <span className="shrink-0 rounded-full bg-highlight px-2 py-0.5 text-xs font-medium text-highlight-fg">
                 Guest
               </span>
             )}
           </span>
-          <span className="text-sm text-muted">
-            {new Date(item.created_at).toLocaleString()}
-            {' · '}
-            {item.source_language ?? '?'} → {item.target_language ?? '?'}
-            {' · '}
-            {item.message_count} message{item.message_count === 1 ? '' : 's'}
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+            <time dateTime={item.created_at} title={new Date(item.created_at).toLocaleString()}>
+              {relativeTime(item.created_at)}
+            </time>
+            <span aria-hidden className="hidden sm:inline">·</span>
+            <span className="rounded border border-line px-1.5 text-xs font-medium uppercase tracking-wide">
+              {item.source_language ?? 'auto'} → {item.target_language ?? '?'}
+            </span>
+            <span aria-hidden className="hidden sm:inline">·</span>
+            <span className="tabular-nums">
+              {item.message_count} message{item.message_count === 1 ? '' : 's'}
+            </span>
           </span>
         </Link>
       )}

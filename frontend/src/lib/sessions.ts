@@ -36,15 +36,6 @@ export function deleteConfirmationText(session: SessionSummary): string {
   return `"${formatSessionTitle(session)}"${messages} will be deleted for good. This can't be undone.`
 }
 
-// "Load more" appends a page rather than replacing the list - the rows
-// already on screen must stay while a further page loads.
-export function appendSessions(
-  existing: SessionSummary[],
-  loaded: SessionSummary[],
-): SessionSummary[] {
-  return [...existing, ...loaded]
-}
-
 // Rename-in-place (KAN-39): a successful PATCH updates just the one row's
 // title, not a refetch of the whole list.
 export function renameSessionInList(
