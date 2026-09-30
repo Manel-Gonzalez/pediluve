@@ -104,6 +104,11 @@ full transcript is a separate read-only page at `/sessions/:id`, re-translating 
 language for viewing **computed on demand, not persisted** (the original live-session translation
 stays in `messages.translated_text`/`target_language` untouched).
 
+**Phase 4.5:** first visual-design iteration. Tailwind CSS with a small design-token system
+(`tailwind.config.ts`: an accent/neutral color scale, a type scale) instead of hand-written CSS per
+component; every existing page and component migrated to it; the transcript view redesigned into
+paired cards with language badges. No new functionality — a styling pass over what Phase 3/4 built.
+
 **Phase 5:** "play" button per translated message → ElevenLabs TTS → audio generated once and
 cached in Supabase Storage (a repeat play serves the stored file, not a fresh paid TTS call) →
 playback in browser. One fixed voice for v1, not one per language.
@@ -157,11 +162,17 @@ read/update/delete functions + Pydantic models in `models/sessions.py`), KAN-36 
 `join_session`/pause-resume rewrite, `SESSION_NOT_FOUND_CLOSE_CODE` 4404), KAN-24
 (`routers/sessions.py` REST CRUD), KAN-25 (on-demand `/translate` endpoint +
 `deepl.translate_many`), KAN-23 (REST API client, `HomePage`), KAN-37 (`NewSessionModal`), KAN-38
-(`LiveSessionPage` at `/sessions/:id/live`, `join_session`-aware `useWebSocket`), KAN-26
-(read-only `SessionDetailPage` at `/sessions/:id`), and KAN-39 (rename/delete on `HomePage` rows).
-Backend tests (`pytest`) and frontend tests (`vitest`) both passing in CI.
+(`LiveSessionPage` at `/sessions/:id/live`, `join_session`-aware `useWebSocket`), KAN-26 +
+KAN-27 (read-only `SessionDetailPage` at `/sessions/:id`, including its own on-demand
+re-translation control), and KAN-39 (rename/delete on `HomePage` rows). Backend tests (`pytest`)
+and frontend tests (`vitest`) both passing in CI. **Verified end-to-end in a real browser**
+against the real Supabase project (create → record → pause → resume → end → revisit → rename →
+delete), migrations 003 and 004 both live.
 
-**Not yet verified end-to-end in a real browser** — pending: walk through create → record → pause
-→ resume → end → revisit → rename → delete against the real Supabase project, now that migrations
-003 and 004 are both live. Next: that browser walkthrough, then start planning Phase 5 (TTS
-playback).
+Phase 4.5 — visual design, **merged to `main`** (PR #5): KAN-42 (Tailwind CSS + design tokens),
+KAN-43 (`Nav`), KAN-44 (`AuthForm`, `NewSessionModal`), KAN-45 (`HomePage`), KAN-46
+(`LiveSessionPage` + recording indicator), KAN-47/KAN-48 (transcript redesigned into paired cards
+with language badges, applied to both the live view and `SessionDetailPage`). Verified in a real
+browser (KAN-49).
+
+Next: plan Phase 5 (TTS playback).
