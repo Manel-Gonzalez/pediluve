@@ -1,0 +1,193 @@
+import asyncio
+
+import pytest
+
+from services import live_rooms
+from services.live_rooms import LiveRoom, LiveRoomRegistry
+
+
+class FakeViewer:
+    def __init__(self, *, fail: bool = False, delay: float = 0.0):
+        self.received: list[dict] = []
+        self.fail = fail
+        self.delay = delay
+
+    async def send(self, payload: dict) -> None:
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.fail:
+            raise RuntimeError("boom")
+        self.received.append(payload)
+
+
+@pytest.fixture(autouse=True)
+def fake_deepl(monkeypatch):
+    async def fake_translate(text: str, target_language: str) -> str:
+        return f"[{target_language}] {text}"
+
+    async def fake_translate_many(texts: list[str], target_language: str) -> list[str | None]:
+        return [f"[{target_language}] {text}" for text in texts]
+
+    monkeypatch.setattr(live_rooms.deepl, "translate", fake_translate)
+    monkeypatch.setattr(live_rooms.deepl, "translate_many", fake_translate_many)
+
+
+async def _drain(room: LiveRoom) -> None:
+    await room._queue.join()
+
+
+async def test_publish_broadcasts_translated_line_to_viewers_in_their_own_language():
+    room = LiveRoom(session_id="s1", title="Test", source_language="es")
+    room.start_worker()
+    viewer_fr = FakeViewer()
+    viewer_de = FakeViewer()
+    room.add_viewer(viewer_fr, "fr")
+    room.add_viewer(viewer_de, "de")
+
+    room.publish("hola", None, None)
+    await _drain(room)
+    await room.stop_worker()
+
+    assert viewer_fr.received == [
+        {"type": "live_line", "index": 0, "original_text": "hola", "translated_text": "[fr] hola", "target_language": "fr"}
+    ]
+    assert viewer_de.received == [
+        {"type": "live_line", "index": 0, "original_text": "hola", "translated_text": "[de] hola", "target_language": "de"}
+    ]
+
+
+async def test_publish_seeds_translation_cache_from_owner_without_extra_deepl_call():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    room.start_worker()
+    viewer = FakeViewer()
+    room.add_viewer(viewer, "fr")
+
+    room.publish("hola", "fr", "owner's own translation")
+    await _drain(room)
+    await room.stop_worker()
+
+    assert viewer.received[0]["translated_text"] == "owner's own translation"
+
+
+async def test_publish_never_awaits_translation_or_viewer_io():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    # No worker started: publish() must return immediately regardless, since
+    # the owner's transcript-save path calls it synchronously without a task.
+    room.publish("hola", None, None)
+    assert room._queue.qsize() == 1
+
+
+async def test_a_failed_or_slow_viewer_send_does_not_block_other_viewers():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    room.start_worker()
+    failing = FakeViewer(fail=True)
+    healthy = FakeViewer()
+    room.add_viewer(failing, "fr")
+    room.add_viewer(healthy, "fr")
+
+    room.publish("hola", None, None)
+    await _drain(room)
+    await room.stop_worker()
+
+    assert healthy.received[0]["translated_text"] == "[fr] hola"
+
+
+async def test_lines_preserve_publish_order_and_increasing_index():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    room.start_worker()
+    viewer = FakeViewer()
+    room.add_viewer(viewer, "fr")
+
+    room.publish("uno", None, None)
+    room.publish("dos", None, None)
+    room.publish("tres", None, None)
+    await _drain(room)
+    await room.stop_worker()
+
+    assert [line["index"] for line in viewer.received] == [0, 1, 2]
+    assert [line["original_text"] for line in viewer.received] == ["uno", "dos", "tres"]
+
+
+async def test_ensure_language_fills_gaps_for_every_existing_line():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    room.lines = [
+        live_rooms.RoomLine(index=0, original_text="uno", translations={"fr": "un"}),
+        live_rooms.RoomLine(index=1, original_text="dos"),
+    ]
+
+    await room.ensure_language("de")
+
+    assert room.lines[0].translations["de"] == "[de] uno"
+    assert room.lines[1].translations["de"] == "[de] dos"
+    # Already-cached language for line 0 is untouched.
+    assert room.lines[0].translations["fr"] == "un"
+
+
+async def test_ensure_language_is_a_no_op_when_nothing_is_missing():
+    calls = []
+
+    async def tracking_translate_many(texts, target_language):
+        calls.append(texts)
+        return [f"[{target_language}] {t}" for t in texts]
+
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    room.lines = [live_rooms.RoomLine(index=0, original_text="uno", translations={"fr": "un"})]
+
+    await room.ensure_language("fr")
+
+    assert calls == []
+
+
+def test_snapshot_returns_lines_in_a_given_language():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    room.lines = [
+        live_rooms.RoomLine(index=0, original_text="uno", translations={"fr": "un"}),
+        live_rooms.RoomLine(index=1, original_text="dos", translations={}),
+    ]
+
+    assert room.snapshot("fr") == [
+        {"index": 0, "original_text": "uno", "translated_text": "un"},
+        {"index": 1, "original_text": "dos", "translated_text": None},
+    ]
+
+
+def test_add_update_remove_viewer():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    viewer = FakeViewer()
+    viewer_id = room.add_viewer(viewer, "fr")
+    assert room.viewers[viewer_id] == (viewer, "fr")
+
+    room.update_viewer_language(viewer_id, "de")
+    assert room.viewers[viewer_id] == (viewer, "de")
+
+    room.remove_viewer(viewer_id)
+    assert viewer_id not in room.viewers
+
+
+async def test_registry_acquire_creates_and_reuses_a_room_by_token():
+    registry = LiveRoomRegistry()
+    room1 = registry.acquire("token-1", session_id="s1", title="T", source_language="es")
+    room2 = registry.acquire("token-1", session_id="s1", title="T", source_language="es")
+
+    assert room1 is room2
+    assert room1.refcount == 2
+    await room1.stop_worker()
+
+
+async def test_registry_release_stops_worker_and_drops_room_at_zero_refcount():
+    registry = LiveRoomRegistry()
+    registry.acquire("token-1", session_id="s1", title=None, source_language=None)
+    room = registry.acquire("token-1", session_id="s1", title=None, source_language=None)
+    assert room.refcount == 2
+
+    await registry.release("token-1")
+    assert registry.get("token-1") is room
+    assert room.refcount == 1
+
+    await registry.release("token-1")
+    assert registry.get("token-1") is None
+
+
+async def test_registry_release_of_unknown_token_is_a_no_op():
+    registry = LiveRoomRegistry()
+    await registry.release("does-not-exist")
