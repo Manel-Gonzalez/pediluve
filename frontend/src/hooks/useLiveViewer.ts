@@ -83,6 +83,10 @@ export function useLiveViewer(shareToken: string) {
         return
       }
       if (data.type === 'audio_ready') {
+        // A reply to a request made before the last language switch -
+        // that URL speaks the old language, and the switch already
+        // cleared this index's state.
+        if (data.target_language !== targetLanguageRef.current) return
         setAudioUrls((prev) => ({ ...prev, [data.index]: data.audio_url }))
         setAudioErrors((prev) => {
           if (!(data.index in prev)) return prev

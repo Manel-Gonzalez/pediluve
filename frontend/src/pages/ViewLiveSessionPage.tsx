@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { AddToMySessions } from '../components/AddToMySessions'
 import { LanguageBadge } from '../components/TranscriptRow'
@@ -40,6 +41,31 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
   // playback must stop line A's, not play both at once.
   const { playingUrl, play, stop } = useAudioPlayer()
   const transcriptText = buildLiveTranscriptText(lines)
+  // The line whose Play was tapped before its audio existed yet - played
+  // automatically once audio_ready arrives, so that first tap isn't just
+  // a silent "fetch" that needs a second tap to actually hear anything.
+  const [pendingPlayIndex, setPendingPlayIndex] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (pendingPlayIndex === null) return
+    const url = audioUrls[pendingPlayIndex]
+    if (url) {
+      play(url)
+      setPendingPlayIndex(null)
+    } else if (audioErrors[pendingPlayIndex]) {
+      setPendingPlayIndex(null)
+    }
+  }, [pendingPlayIndex, audioUrls, audioErrors, play])
+
+  const handleRequestAudio = (index: number) => {
+    setPendingPlayIndex(index)
+    requestAudio(index)
+  }
+
+  const handleLanguageChange = (language: string) => {
+    setPendingPlayIndex(null)
+    setTargetLanguage(language)
+  }
 
   const handleDownload = () => {
     const blob = new Blob([transcriptText], { type: 'text/plain;charset=utf-8' })
@@ -89,7 +115,7 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
           <select
             value={targetLanguage}
             disabled={joinStatus !== 'joined'}
-            onChange={(event) => setTargetLanguage(event.target.value)}
+            onChange={(event) => handleLanguageChange(event.target.value)}
             className="rounded border border-ink-200 px-2 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
           >
             {SUPPORTED_LANGUAGES.map((code) => (
@@ -121,7 +147,7 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
                 audioUrl={audioUrls[line.index] ?? null}
                 loading={audioLoading[line.index] ?? false}
                 error={audioErrors[line.index] ?? null}
-                onRequestAudio={requestAudio}
+                onRequestAudio={handleRequestAudio}
                 playingUrl={playingUrl}
                 play={play}
                 stop={stop}
