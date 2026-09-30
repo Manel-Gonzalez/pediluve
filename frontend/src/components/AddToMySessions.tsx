@@ -1,7 +1,9 @@
+import { UserPlus } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { addGuestSession } from '../lib/api'
+import { Button } from './Button'
 
 // "Add to my sessions" (KAN-62): a signed-in guest saves a live/past
 // session to their own account from its share link. Signed out, this is
@@ -46,12 +48,13 @@ export function AddToMySessions({
   }
 
   return (
-    <button
+    <Button
+      size="sm"
       onClick={handleClick}
-      disabled={status === 'saving'}
-      className="w-fit rounded border border-line px-2 py-1 text-xs font-medium text-fg hover:border-line-strong disabled:cursor-not-allowed disabled:opacity-50"
+      loading={status === 'saving'}
+      icon={<UserPlus className="h-4 w-4" aria-hidden />}
     >
       {status === 'saving' ? 'Adding…' : status === 'error' ? 'Retry' : 'Add to my sessions'}
-    </button>
+    </Button>
   )
 }

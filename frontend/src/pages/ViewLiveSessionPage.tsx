@@ -1,3 +1,6 @@
+import { languageName } from '../lib/languageLabel'
+import { Download } from 'lucide-react'
+import { Button } from '../components/Button'
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { AddToMySessions } from '../components/AddToMySessions'
@@ -148,18 +151,18 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
           >
             {SUPPORTED_LANGUAGES.map((code) => (
               <option key={code} value={code}>
-                {code}
+                {languageName(code)}
               </option>
             ))}
           </select>
         </label>
-        <button
+        <Button
           onClick={handleDownload}
           disabled={!transcriptText}
-          className="rounded border border-line px-3 py-1.5 text-sm font-medium text-fg hover:border-line-strong disabled:cursor-not-allowed disabled:opacity-50"
+          icon={<Download className="h-4 w-4" aria-hidden />}
         >
           Download translation
-        </button>
+        </Button>
       </div>
       {listen.listening && (
         <p className="-mt-2 mb-4 text-xs text-muted">

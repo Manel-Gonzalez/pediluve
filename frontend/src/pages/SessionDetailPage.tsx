@@ -1,3 +1,6 @@
+import { languageName } from '../lib/languageLabel'
+import { Download } from 'lucide-react'
+import { Button } from '../components/Button'
 import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { Link, useParams } from 'react-router-dom'
@@ -179,19 +182,21 @@ function SessionDetailPageContent({ session, sessionId }: { session: Session; se
           >
             {SUPPORTED_LANGUAGES.map((code) => (
               <option key={code} value={code}>
-                {code}
+                {languageName(code)}
               </option>
             ))}
           </select>
         </label>
         {translating && <span className="text-sm italic text-muted">Translating…</span>}
-        <button
+        <Button
           onClick={handleDownload}
-          disabled={downloading || translating || detail.messages.length === 0}
-          className="ml-auto self-end rounded border border-line px-3 py-1.5 text-sm font-medium text-fg hover:border-line-strong disabled:cursor-not-allowed disabled:opacity-50"
+          loading={downloading}
+          disabled={translating || detail.messages.length === 0}
+          icon={<Download className="h-4 w-4" aria-hidden />}
+          className="ml-auto self-end"
         >
           {downloading ? 'Downloading…' : 'Download transcript'}
-        </button>
+        </Button>
       </div>
       {translateError && <p className="text-danger">{translateError}</p>}
       {downloadError && <p className="text-danger">{downloadError}</p>}

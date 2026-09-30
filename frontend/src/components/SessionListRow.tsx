@@ -1,4 +1,5 @@
-import { useState, type KeyboardEvent } from 'react'
+import { useState, type KeyboardEvent, type MouseEvent } from 'react'
+import { Check, Pencil, Trash2, UserMinus, X } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { Link } from 'react-router-dom'
 import { ApiError, deleteSession, removeGuestSession, renameSession } from '../lib/api'
@@ -6,6 +7,12 @@ import { sessionPath } from '../lib/routes'
 import { validateSessionTitle } from '../lib/sessionTitle'
 import { formatSessionTitle } from '../lib/sessions'
 import type { SessionSummary } from '../lib/types'
+import { IconButton } from './IconButton'
+
+// Keeps the input focused when its own check/x buttons are pressed - blur
+// cancels the edit (see onBlur below), and on a phone it would fire before
+// the tap on the check lands.
+const keepFocus = (event: MouseEvent) => event.preventDefault()
 
 type SessionListRowProps = {
   session: Session
@@ -107,20 +114,29 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
   return (
     <li className="flex items-center justify-between gap-4 rounded-lg border border-line p-4 transition-shadow hover:shadow-md hover:border-primary/40">
       {isEditing ? (
-        <div className="flex flex-col gap-1 flex-1">
-          <input
-            autoFocus
-            maxLength={120}
-            value={draftTitle}
-            disabled={pending}
-            onChange={(event) => setDraftTitle(event.target.value)}
-            onKeyDown={handleKeyDown}
-            // A click away from the input cancels rather than saves -
-            // Enter is the only way to commit, so an accidental blur can't
-            // silently rename the session.
-            onBlur={() => !pending && cancelEditing()}
-            className="px-2 py-1 text-base border border-line rounded-md"
-          />
+        <div className="flex flex-1 flex-col gap-1">
+          <div className="flex items-center gap-1">
+            <input
+              autoFocus
+              maxLength={120}
+              value={draftTitle}
+              disabled={pending}
+              onChange={(event) => setDraftTitle(event.target.value)}
+              onKeyDown={handleKeyDown}
+              // A click away from the input cancels rather than saves -
+              // Enter is the only way to commit, so an accidental blur can't
+              // silently rename the session.
+              onBlur={() => !pending && cancelEditing()}
+              aria-label="Session title"
+              className="min-w-0 flex-1 rounded-lg border border-line px-2 py-1 text-base focus:border-primary focus:outline-none"
+            />
+            <IconButton label="Save title" onMouseDown={keepFocus} onClick={saveRename} disabled={pending}>
+              <Check className="h-4 w-4" aria-hidden />
+            </IconButton>
+            <IconButton label="Cancel rename" onMouseDown={keepFocus} onClick={cancelEditing} disabled={pending}>
+              <X className="h-4 w-4" aria-hidden />
+            </IconButton>
+          </div>
           {error && <span className="text-sm text-danger">{error}</span>}
         </div>
       ) : (
@@ -142,32 +158,19 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
           </span>
         </Link>
       )}
-      <div className="flex gap-2 flex-shrink-0">
+      <div className="flex shrink-0 gap-1">
         {item.role === 'guest' ? (
-          <button
-            type="button"
-            onClick={handleRemoveGuestSession}
-            className="px-3 py-1 text-sm rounded-md border border-line text-danger hover:bg-danger-soft"
-          >
-            Remove
-          </button>
+          <IconButton label="Remove from my sessions" tone="danger" onClick={handleRemoveGuestSession}>
+            <UserMinus className="h-4 w-4" aria-hidden />
+          </IconButton>
         ) : (
           <>
-            <button
-              type="button"
-              onClick={startEditing}
-              disabled={isEditing}
-              className="px-3 py-1 text-sm rounded-md border border-primary text-primary hover:bg-highlight disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Rename
-            </button>
-            <button
-              type="button"
-              onClick={handleDelete}
-              className="px-3 py-1 text-sm rounded-md border border-line text-danger hover:bg-danger-soft"
-            >
-              Delete
-            </button>
+            <IconButton label="Rename session" onClick={startEditing} disabled={isEditing}>
+              <Pencil className="h-4 w-4" aria-hidden />
+            </IconButton>
+            <IconButton label="Delete session" tone="danger" onClick={handleDelete}>
+              <Trash2 className="h-4 w-4" aria-hidden />
+            </IconButton>
           </>
         )}
       </div>

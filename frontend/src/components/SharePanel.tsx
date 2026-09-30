@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
+import { Check, Copy } from 'lucide-react'
 import QRCode from 'qrcode'
 import { buildShareUrl } from '../lib/share'
+import { Button } from './Button'
 
 // Lets anyone on the same network scan into a read-only live view of this
 // session (KAN-50) - the share_token is a bearer capability link, so this
@@ -43,12 +45,14 @@ export function SharePanel({ shareToken }: { shareToken: string }) {
       <div className="flex min-w-0 flex-col gap-1.5">
         <p className="text-sm font-medium text-fg">Share this session</p>
         <p className="max-w-xs truncate text-xs text-muted">{shareUrl}</p>
-        <button
+        <Button
+          size="sm"
           onClick={handleCopy}
-          className="w-fit rounded border border-line px-2 py-1 text-xs font-medium text-fg hover:border-line-strong"
+          className="w-fit"
+          icon={copied ? <Check className="h-4 w-4 text-primary" aria-hidden /> : <Copy className="h-4 w-4" aria-hidden />}
         >
-          {copied ? 'Copied!' : 'Copy link'}
-        </button>
+          {copied ? 'Copied' : 'Copy link'}
+        </Button>
       </div>
     </div>
   )

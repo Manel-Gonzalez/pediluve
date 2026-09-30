@@ -1,3 +1,4 @@
+import { languageName } from '../lib/languageLabel'
 import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { Link, useNavigate, useParams } from 'react-router-dom'
@@ -176,7 +177,7 @@ function LiveSessionPageContent({ session, sessionId }: { session: Session; sess
             <option value="auto">Auto-detect</option>
             {SUPPORTED_LANGUAGES.map((code) => (
               <option key={code} value={code}>
-                {code}
+                {languageName(code)}
               </option>
             ))}
           </select>
@@ -195,7 +196,7 @@ function LiveSessionPageContent({ session, sessionId }: { session: Session; sess
           >
             {SUPPORTED_LANGUAGES.map((code) => (
               <option key={code} value={code}>
-                {code}
+                {languageName(code)}
               </option>
             ))}
           </select>
