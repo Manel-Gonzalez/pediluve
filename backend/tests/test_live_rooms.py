@@ -56,6 +56,28 @@ async def test_publish_broadcasts_translated_line_to_viewers_in_their_own_langua
     ]
 
 
+async def test_publish_stores_the_message_id_on_the_line_for_later_audio_lookup():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    room.start_worker()
+
+    room.publish("hola", None, None, message_id="msg-1")
+    await _drain(room)
+    await room.stop_worker()
+
+    assert room.lines[0].message_id == "msg-1"
+
+
+async def test_publish_without_a_message_id_defaults_to_none():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    room.start_worker()
+
+    room.publish("hola", None, None)
+    await _drain(room)
+    await room.stop_worker()
+
+    assert room.lines[0].message_id is None
+
+
 async def test_publish_seeds_translation_cache_from_owner_without_extra_deepl_call():
     room = LiveRoom(session_id="s1", title=None, source_language=None)
     room.start_worker()

@@ -269,6 +269,41 @@ async def test_save_message_accepts_translated_text_and_target_language(fake_cli
     assert saved["target_language"] == "es"
 
 
+async def test_save_message_returns_the_inserted_row_with_its_id(fake_client):
+    session_id = await create_session_id(user())
+    row = await supabase.save_message(user(), session_id, 0, "hello")
+    assert row["id"] is not None
+    assert row["original_text"] == "hello"
+
+
+async def test_create_message_audio_inserts_and_returns_the_row(fake_client):
+    session_id = await create_session_id(user())
+    message = await supabase.save_message(user(), session_id, 0, "hello")
+
+    row = await supabase.create_message_audio(user(), message["id"], "fr", "owner/session/msg.fr.mp3")
+
+    assert row["message_id"] == message["id"]
+    assert row["language"] == "fr"
+    assert row["storage_path"] == "owner/session/msg.fr.mp3"
+
+
+async def test_get_message_audio_returns_none_when_not_cached(fake_client):
+    session_id = await create_session_id(user())
+    message = await supabase.save_message(user(), session_id, 0, "hello")
+
+    assert await supabase.get_message_audio(user(), message["id"], "fr") is None
+
+
+async def test_get_message_audio_returns_the_matching_row(fake_client):
+    session_id = await create_session_id(user())
+    message = await supabase.save_message(user(), session_id, 0, "hello")
+    await supabase.create_message_audio(user(), message["id"], "fr", "owner/session/msg.fr.mp3")
+    await supabase.create_message_audio(user(), message["id"], "de", "owner/session/msg.de.mp3")
+
+    row = await supabase.get_message_audio(user(), message["id"], "fr")
+    assert row["storage_path"] == "owner/session/msg.fr.mp3"
+
+
 async def test_update_session_target_language_updates_the_matching_session(fake_client):
     session_id = await create_session_id(user())
     await supabase.update_session_target_language(user(), session_id, "de")

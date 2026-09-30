@@ -52,18 +52,56 @@ async def save_message(
     original_text: str,
     translated_text: str | None = None,
     target_language: str | None = None,
-) -> None:
+) -> dict:
+    # Returns the inserted row (not just None) so callers can thread its id
+    # through to the live room (KAN-58's request_audio needs a stable
+    # message_id to key the TTS cache on).
     client = await client_for(user.access_token)
     try:
-        await client.table("messages").insert(
-            {
-                "session_id": session_id,
-                "sequence": sequence,
-                "original_text": original_text,
-                "translated_text": translated_text,
-                "target_language": target_language,
-            }
-        ).execute()
+        result = (
+            await client.table("messages")
+            .insert(
+                {
+                    "session_id": session_id,
+                    "sequence": sequence,
+                    "original_text": original_text,
+                    "translated_text": translated_text,
+                    "target_language": target_language,
+                }
+            )
+            .execute()
+        )
+        return result.data[0]
+    finally:
+        await client.postgrest.aclose()
+
+
+async def get_message_audio(user: AuthenticatedUser, message_id: str, language: str) -> dict | None:
+    client = await client_for(user.access_token)
+    try:
+        result = (
+            await client.table("message_audio")
+            .select("*")
+            .eq("message_id", message_id)
+            .eq("language", language)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+    finally:
+        await client.postgrest.aclose()
+
+
+async def create_message_audio(
+    user: AuthenticatedUser, message_id: str, language: str, storage_path: str
+) -> dict:
+    client = await client_for(user.access_token)
+    try:
+        result = (
+            await client.table("message_audio")
+            .insert({"message_id": message_id, "language": language, "storage_path": storage_path})
+            .execute()
+        )
+        return result.data[0]
     finally:
         await client.postgrest.aclose()
 

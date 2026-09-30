@@ -155,6 +155,12 @@ class ConnectionHandler:
         # fresh rather than a value captured earlier, so an in-flight
         # save/update picks up the new token if it hasn't reached Supabase yet.
         self.user = authenticated_user
+        if self.live_room is not None:
+            # Keeps the room's copy current across a token refresh - a
+            # viewer's request_audio (KAN-58) borrows whatever's here to
+            # write the TTS cache, so a stale/expired token here would fail
+            # that write with no way for the owner to see why.
+            self.live_room.owner_user = authenticated_user
         await self.send(Authenticated(user_id=authenticated_user.id).model_dump())
 
     async def _handle_text_message(self, raw: str) -> None:
@@ -290,6 +296,7 @@ class ConnectionHandler:
             title=row["title"],
             source_language=row["source_language"],
         )
+        self.live_room.owner_user = self.user
 
         await self.send(
             SessionJoined(
@@ -429,12 +436,13 @@ class ConnectionHandler:
             except Exception:
                 logger.exception("Could not translate transcript")
 
+        message_id: str | None = None
         if self.db_session_id is not None:
             try:
                 # self.user read here, not captured earlier in this method - if a
                 # re-authenticate swapped it while the DeepL call above was in
                 # flight, this save uses the new token, per KAN-18.
-                await supabase.save_message(
+                saved = await supabase.save_message(
                     self.user,
                     self.db_session_id,
                     self.sequence,
@@ -442,6 +450,7 @@ class ConnectionHandler:
                     translated_text=translated_text,
                     target_language=target_language,
                 )
+                message_id = saved["id"]
                 self.sequence += 1
             except Exception:
                 logger.exception("Could not save message to Supabase")
@@ -450,7 +459,9 @@ class ConnectionHandler:
             # Never awaited: publish() only queues, so a slow/failing
             # viewer-side translation or send can never stall this worker
             # (see services/live_rooms.py and docs/decisions.md's D4).
-            self.live_room.publish(text, target_language, translated_text)
+            # message_id stays None if the save above failed - that line
+            # just can't offer playback (KAN-58), nothing else changes.
+            self.live_room.publish(text, target_language, translated_text, message_id=message_id)
 
         # Persisted before sending, not after: on a real disconnect, send()
         # raises WebSocketDisconnect once the socket write actually fails,

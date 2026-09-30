@@ -113,17 +113,18 @@ class _FakeSupabase:
     async def save_message(
         self, user, session_id, sequence, original_text, translated_text=None, target_language=None
     ):
-        self.messages.append(
-            {
-                "user_id": user.id,
-                "access_token": user.access_token,
-                "session_id": session_id,
-                "sequence": sequence,
-                "original_text": original_text,
-                "translated_text": translated_text,
-                "target_language": target_language,
-            }
-        )
+        row = {
+            "id": str(uuid.uuid4()),
+            "user_id": user.id,
+            "access_token": user.access_token,
+            "session_id": session_id,
+            "sequence": sequence,
+            "original_text": original_text,
+            "translated_text": translated_text,
+            "target_language": target_language,
+        }
+        self.messages.append(row)
+        return row
 
     async def update_session_target_language(self, user, session_id, target_language):
         self.sessions[session_id]["target_language"] = target_language

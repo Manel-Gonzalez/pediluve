@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from services import deepl
+from services.auth import AuthenticatedUser
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,11 @@ class RoomLine:
     # Keyed by target language code; a value of None means translation was
     # attempted and failed (distinct from "not attempted yet" - a missing key).
     translations: dict[str, str | None] = field(default_factory=dict)
+    # The DB messages.id this line was saved as, or None if the save failed
+    # (see routers/ws.py::_handle_committed_transcript) - request_audio
+    # (KAN-58) needs this to key the message_audio cache; a line with no
+    # message_id simply can't offer playback.
+    message_id: str | None = None
 
 
 class LiveRoom:
@@ -42,9 +48,15 @@ class LiveRoom:
         # all simple dict operations without requiring Viewer to be hashable.
         self.viewers: dict[int, tuple[Viewer, str]] = {}
         self.refcount = 0
-        self._queue: asyncio.Queue[tuple[str, str | None, str | None]] = asyncio.Queue()
+        self._queue: asyncio.Queue[tuple[str, str | None, str | None, str | None]] = asyncio.Queue()
         self._worker_task: asyncio.Task | None = None
         self._next_viewer_id = 0
+        # The live owner connection's own AuthenticatedUser, kept current by
+        # routers/ws.py (set on join, refreshed on re-authenticate) - a
+        # viewer's request_audio (KAN-58) borrows this to write the TTS
+        # cache under the owner's RLS-scoped credentials, never its own
+        # (an anonymous viewer has no Supabase identity at all, see D3).
+        self.owner_user: AuthenticatedUser | None = None
 
     def start_worker(self) -> None:
         if self._worker_task is None:
@@ -87,17 +99,22 @@ class LiveRoom:
         original_text: str,
         owner_target_language: str | None,
         owner_translated_text: str | None,
+        message_id: str | None = None,
     ) -> None:
         # Never awaits - called synchronously from the owner's committed-
         # transcript path right after its own Supabase save, which must not
         # be slowed by viewer translation calls or viewer socket I/O.
-        self._queue.put_nowait((original_text, owner_target_language, owner_translated_text))
+        self._queue.put_nowait((original_text, owner_target_language, owner_translated_text, message_id))
 
     async def _run_worker(self) -> None:
         while True:
-            original_text, owner_target_language, owner_translated_text = await self._queue.get()
+            original_text, owner_target_language, owner_translated_text, message_id = (
+                await self._queue.get()
+            )
             try:
-                await self._publish_one(original_text, owner_target_language, owner_translated_text)
+                await self._publish_one(
+                    original_text, owner_target_language, owner_translated_text, message_id
+                )
             except Exception:
                 logger.exception("Could not publish a line to live room %s", self.session_id)
             finally:
@@ -108,8 +125,9 @@ class LiveRoom:
         original_text: str,
         owner_target_language: str | None,
         owner_translated_text: str | None,
+        message_id: str | None,
     ) -> None:
-        line = RoomLine(index=len(self.lines), original_text=original_text)
+        line = RoomLine(index=len(self.lines), original_text=original_text, message_id=message_id)
         if owner_target_language is not None:
             # Seeds the cache with the owner's own translation - zero extra
             # DeepL cost for a viewer whose language happens to match it.
