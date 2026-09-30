@@ -11,3 +11,21 @@ export function buildLiveTranscriptText(lines: LiveLineData[]): string {
   const translated = lines.map((line) => line.translated_text).filter((text): text is string => !!text)
   return translated.length ? `${translated.join('\n\n')}\n` : ''
 }
+
+// "Listen live" (useLiveListen): which lines arrived since the last one
+// queued. A line with no translation (its DeepL call failed) has nothing
+// to speak, but still counts as seen so it's never picked up later.
+// lastIndex is where the next call picks up from.
+export function newLinesToRead(
+  lines: LiveLineData[],
+  lastQueuedIndex: number,
+): { indexes: number[]; lastIndex: number } {
+  let lastIndex = lastQueuedIndex
+  const indexes: number[] = []
+  for (const line of lines) {
+    if (line.index <= lastQueuedIndex) continue
+    lastIndex = Math.max(lastIndex, line.index)
+    if (line.translated_text) indexes.push(line.index)
+  }
+  return { indexes, lastIndex }
+}

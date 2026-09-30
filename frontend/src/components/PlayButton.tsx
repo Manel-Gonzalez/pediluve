@@ -22,7 +22,7 @@ export function PlayButton({
   error: string | null
   onRequestAudio: (index: number) => void
   playingUrl: string | null
-  play: (url: string) => void
+  play: (url: string, onDone?: () => void) => void
   stop: () => void
 }) {
   const isPlaying = audioUrl !== null && playingUrl === audioUrl

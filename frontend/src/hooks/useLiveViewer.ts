@@ -128,6 +128,14 @@ export function useLiveViewer(shareToken: string) {
   const requestAudio = useCallback(
     (index: number) => {
       setAudioLoading((prev) => ({ ...prev, [index]: true }))
+      // A previous attempt's error must not linger - "Listen live" would
+      // read it as this request having already failed and skip the line.
+      setAudioErrors((prev) => {
+        if (!(index in prev)) return prev
+        const next = { ...prev }
+        delete next[index]
+        return next
+      })
       sendJson({ type: 'request_audio', index })
     },
     [sendJson],

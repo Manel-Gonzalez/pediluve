@@ -4,6 +4,7 @@ import { AddToMySessions } from '../components/AddToMySessions'
 import { LanguageBadge } from '../components/TranscriptRow'
 import { PlayButton } from '../components/PlayButton'
 import { useAudioPlayer } from '../hooks/useAudioPlayer'
+import { useLiveListen } from '../hooks/useLiveListen'
 import { useLiveViewer } from '../hooks/useLiveViewer'
 import { SUPPORTED_LANGUAGES } from '../lib/languageControls'
 import { saveBlob, transcriptFilename } from '../lib/download'
@@ -40,7 +41,8 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
   } = useLiveViewer(shareToken)
   // One shared player, not one per line (PlayButton) - starting line B's
   // playback must stop line A's, not play both at once.
-  const { playingUrl, play, stop } = useAudioPlayer()
+  const { playingUrl, play, stop, unlock } = useAudioPlayer()
+  const listen = useLiveListen({ lines, audioUrls, audioErrors, requestAudio, play, stop, unlock })
   const transcriptText = buildLiveTranscriptText(lines)
   // The line whose Play was tapped before its audio existed yet - played
   // automatically once audio_ready arrives, so that first tap isn't just
@@ -59,13 +61,26 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
   }, [pendingPlayIndex, audioUrls, audioErrors, play])
 
   const handleRequestAudio = (index: number) => {
+    // Inside the tap - lets the later auto-play (after audio_ready, not
+    // itself a gesture) work on iOS.
+    unlock()
     setPendingPlayIndex(index)
     requestAudio(index)
   }
 
   const handleLanguageChange = (language: string) => {
     setPendingPlayIndex(null)
+    listen.resetQueue()
     setTargetLanguage(language)
+  }
+
+  const handleToggleListen = () => {
+    if (listen.listening) {
+      listen.stopListening()
+      return
+    }
+    setPendingPlayIndex(null)
+    listen.start()
   }
 
   const handleDownload = () => {
@@ -106,6 +121,18 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
       )}
 
       <div className="my-4 flex flex-wrap items-end gap-4">
+        <button
+          onClick={handleToggleListen}
+          disabled={joinStatus !== 'joined'}
+          aria-pressed={listen.listening}
+          className={`rounded px-3 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+            listen.listening
+              ? 'bg-accent-500 text-white hover:bg-accent-600'
+              : 'border border-accent-500 text-accent-600 hover:bg-accent-50'
+          }`}
+        >
+          {listen.listening ? 'Stop listening' : 'Listen live'}
+        </button>
         <label className="flex w-fit flex-col gap-1 text-sm text-ink-900">
           Your language
           <select
@@ -129,15 +156,28 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
           Download translation
         </button>
       </div>
+      {listen.listening && (
+        <p className="-mt-2 mb-4 text-xs text-ink-500">
+          Reading each new line aloud as it arrives.
+        </p>
+      )}
 
       <div className="my-4 flex flex-col gap-3">
         {lines.map((line) => (
-          <div key={line.index} className="flex flex-col gap-1.5 rounded-lg border border-ink-200 p-3">
+          <div
+            key={line.index}
+            className={`flex flex-col gap-1.5 rounded-lg border p-3 ${
+              listen.currentIndex === line.index ? 'border-accent-400 bg-accent-50' : 'border-ink-200'
+            }`}
+          >
             <LanguageBadge>{targetLanguage}</LanguageBadge>
             <p className={`text-sm ${line.translated_text ? 'text-ink-900' : 'italic text-ink-500'}`}>
               {line.translated_text ?? 'Translating…'}
             </p>
-            {line.translated_text && (
+            {/* Per-line Play only while "Listen live" is off - with it on,
+                lines play themselves in order, and a manual tap would
+                cut into that queue. */}
+            {!listen.listening && line.translated_text && (
               <PlayButton
                 index={line.index}
                 audioUrl={audioUrls[line.index] ?? null}
