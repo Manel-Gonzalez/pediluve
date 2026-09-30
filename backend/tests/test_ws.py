@@ -1486,6 +1486,33 @@ def test_publishing_to_the_room_never_blocks_saving_or_sending_the_owners_own_tr
     assert [m["original_text"] for m in saved] == ["hola"]
 
 
+def test_the_owners_transcript_is_sent_without_waiting_for_the_db_save(
+    monkeypatch, joined_ws, fake_supabase
+):
+    # KAN-65: the save used to sit between DeepL and the send, adding a
+    # Supabase round trip to every line's latency.
+    real_save = fake_supabase.save_message
+
+    async def slow_save(*args, **kwargs):
+        await asyncio.sleep(0.5)
+        return await real_save(*args, **kwargs)
+
+    monkeypatch.setattr("routers.ws.supabase.save_message", slow_save)
+
+    canned = [{"message_type": "committed_transcript", "text": "hola"}]
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", make_fake_session_class(canned))
+
+    with joined_ws() as (ws, session_id):
+        ws.send_json({"type": "start_transcription"})
+        assert ws.receive_json()["type"] == "transcript"
+        assert [m for m in fake_supabase.messages if m["session_id"] == session_id] == []
+        ws.send_json({"type": "stop_transcription"})
+
+    # Still saved, and stop_transcription waited for it.
+    saved = [m for m in fake_supabase.messages if m["session_id"] == session_id]
+    assert [(m["original_text"], m["sequence"]) for m in saved] == [("hola", 0)]
+
+
 def test_end_to_end_a_real_viewer_socket_receives_the_owners_committed_transcript(
     monkeypatch, joined_ws, fake_supabase
 ):

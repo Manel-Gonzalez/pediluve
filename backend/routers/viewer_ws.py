@@ -187,20 +187,26 @@ class ViewerConnectionHandler:
         translated_text = line.translations.get(language)
 
         # Every one of these is "can't offer playback for this line right
-        # now" - a save that failed (no message_id, see routers/ws.py), a
-        # translation that hasn't arrived or failed (no text to speak), or
-        # (shouldn't happen while a room exists, but defensive) no owner
-        # connection to borrow credentials from.
-        if line.message_id is None or translated_text is None or self.room.owner_user is None:
+        # now" - a translation that hasn't arrived or failed (no text to
+        # speak), (shouldn't happen while a room exists, but defensive) no
+        # owner connection to borrow credentials from, or a save that failed
+        # (no message_id, see routers/ws.py). The id can still be on its way:
+        # lines reach viewers before the owner's save finishes (KAN-65), and
+        # "Listen live" asks for audio the moment a line arrives.
+        if translated_text is None or self.room.owner_user is None:
+            await self.send(AudioFailed(index=index, message="Audio unavailable").model_dump())
+            return
+        message_id = await line.resolved_message_id()
+        if message_id is None:
             await self.send(AudioFailed(index=index, message="Audio unavailable").model_dump())
             return
 
         try:
             audio_url, cached = await tts_cache.get_or_create_audio_url(
-                self.room.owner_user, self.room.session_id, line.message_id, translated_text, language
+                self.room.owner_user, self.room.session_id, message_id, translated_text, language
             )
         except Exception:
-            logger.exception("Could not generate audio for message %s (%s)", line.message_id, language)
+            logger.exception("Could not generate audio for message %s (%s)", message_id, language)
             await self.send(AudioFailed(index=index, message="Audio unavailable").model_dump())
             return
 

@@ -437,40 +437,22 @@ class ConnectionHandler:
             except Exception:
                 logger.exception("Could not translate transcript")
 
-        message_id: str | None = None
-        if self.db_session_id is not None:
-            try:
-                # self.user read here, not captured earlier in this method - if a
-                # re-authenticate swapped it while the DeepL call above was in
-                # flight, this save uses the new token, per KAN-18.
-                saved = await supabase.save_message(
-                    self.user,
-                    self.db_session_id,
-                    self.sequence,
-                    text,
-                    translated_text=translated_text,
-                    target_language=target_language,
-                )
-                message_id = saved["id"]
-                self.sequence += 1
-            except Exception:
-                logger.exception("Could not save message to Supabase")
-
-        if self.live_room is not None:
-            # Never awaited: publish() only queues, so a slow/failing
-            # viewer-side translation or send can never stall this worker
-            # (see services/live_rooms.py and docs/decisions.md's D4).
-            # message_id stays None if the save above failed - that line
-            # just can't offer playback (KAN-58), nothing else changes.
-            self.live_room.publish(text, target_language, translated_text, message_id=message_id)
-
-        # Persisted before sending, not after: on a real disconnect, send()
-        # raises WebSocketDisconnect once the socket write actually fails,
-        # which must not skip (or, if unguarded, wipe out via an uncaught
-        # exception) the save above - the disconnect/cancellation-shielded
-        # cleanup path this now runs under exists precisely to still persist
-        # a committed transcript the client will never see.
+        # KAN-65: the save runs alongside the send and the room publish
+        # instead of before them, so a line's latency no longer includes a
+        # Supabase round trip. It's still awaited before this returns: the
+        # worker handles one line at a time, which keeps `sequence` in order,
+        # and _pause_transcription/_cleanup wait on that worker, so a
+        # committed line is still persisted even if the client disconnects.
+        save = asyncio.ensure_future(self._save_committed(text, translated_text, target_language))
         try:
+            if self.live_room is not None:
+                # Never awaited: publish() only queues, so a slow/failing
+                # viewer-side translation or send can never stall this worker
+                # (see services/live_rooms.py and docs/decisions.md's D4).
+                # The save itself stands in for the message_id until it
+                # finishes; a failed save resolves to None and that line just
+                # can't offer playback (KAN-58), nothing else changes.
+                self.live_room.publish(text, target_language, translated_text, message_id=save)
             await self.send(
                 Transcript(
                     original_text=text,
@@ -480,6 +462,31 @@ class ConnectionHandler:
             )
         except WebSocketDisconnect:
             pass
+        finally:
+            await save
+
+    async def _save_committed(
+        self, text: str, translated_text: str | None, target_language: str | None
+    ) -> str | None:
+        if self.db_session_id is None:
+            return None
+        try:
+            # self.user read here, not captured by the caller - if a
+            # re-authenticate swapped it while the DeepL call was in flight,
+            # this save uses the new token, per KAN-18.
+            saved = await supabase.save_message(
+                self.user,
+                self.db_session_id,
+                self.sequence,
+                text,
+                translated_text=translated_text,
+                target_language=target_language,
+            )
+        except Exception:
+            logger.exception("Could not save message to Supabase")
+            return None
+        self.sequence += 1
+        return saved["id"]
 
     async def _retranslate_committed_texts(self, target_language: str, generation: int) -> None:
         # Iterates the live list, not a snapshot: retranslated_transcripts

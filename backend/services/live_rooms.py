@@ -13,6 +13,10 @@ logger = logging.getLogger(__name__)
 # never stall delivery to every other viewer in the room (see KAN-50's D4).
 _SEND_TIMEOUT_SECONDS = 5.0
 
+# How long a viewer's request_audio waits for the owner's Supabase save to
+# produce a message_id (KAN-65: lines go out before their save finishes).
+_MESSAGE_ID_TIMEOUT_SECONDS = 10.0
+
 
 class Viewer(Protocol):
     async def send(self, payload: dict) -> None: ...
@@ -30,6 +34,24 @@ class RoomLine:
     # (KAN-58) needs this to key the message_audio cache; a line with no
     # message_id simply can't offer playback.
     message_id: str | None = None
+    # KAN-65: the owner publishes a line as soon as it's translated, before
+    # its Supabase save finishes, so the id can still be on its way. Set to
+    # that save while it's pending; resolved_message_id() waits on it.
+    pending_message_id: asyncio.Future[str | None] | None = None
+
+    async def resolved_message_id(self, timeout: float = _MESSAGE_ID_TIMEOUT_SECONDS) -> str | None:
+        pending = self.pending_message_id
+        if pending is None:
+            return self.message_id
+        try:
+            # shield(): a viewer's timeout must not cancel the owner's save.
+            message_id = await asyncio.wait_for(asyncio.shield(pending), timeout)
+        except Exception:
+            # Timed out, or the save itself raised - no id to key audio on.
+            return None
+        self.message_id = message_id
+        self.pending_message_id = None
+        return message_id
 
 
 class LiveRoom:
@@ -121,11 +143,12 @@ class LiveRoom:
         original_text: str,
         owner_target_language: str | None,
         owner_translated_text: str | None,
-        message_id: str | None = None,
+        message_id: str | asyncio.Future[str | None] | None = None,
     ) -> None:
         # Never awaits - called synchronously from the owner's committed-
-        # transcript path right after its own Supabase save, which must not
-        # be slowed by viewer translation calls or viewer socket I/O.
+        # transcript path, which must not be slowed by viewer translation
+        # calls or viewer socket I/O. message_id may be the owner's still-
+        # running save (KAN-65) rather than an id - see RoomLine.
         self._queue.put_nowait((original_text, owner_target_language, owner_translated_text, message_id))
 
     async def _run_worker(self) -> None:
@@ -147,9 +170,13 @@ class LiveRoom:
         original_text: str,
         owner_target_language: str | None,
         owner_translated_text: str | None,
-        message_id: str | None,
+        message_id: str | asyncio.Future[str | None] | None,
     ) -> None:
-        line = RoomLine(index=len(self.lines), original_text=original_text, message_id=message_id)
+        line = RoomLine(index=len(self.lines), original_text=original_text)
+        if isinstance(message_id, asyncio.Future):
+            line.pending_message_id = message_id
+        else:
+            line.message_id = message_id
         if owner_target_language is not None:
             # Seeds the cache with the owner's own translation - zero extra
             # DeepL cost for a viewer whose language happens to match it.
