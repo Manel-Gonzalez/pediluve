@@ -14,7 +14,7 @@ export function SharePanel({ shareToken }: { shareToken: string }) {
 
   useEffect(() => {
     let cancelled = false
-    QRCode.toDataURL(shareUrl, { margin: 1, width: 160 })
+    QRCode.toDataURL(shareUrl, { margin: 1, width: 320 })
       .then((dataUrl) => {
         if (!cancelled) setQrDataUrl(dataUrl)
       })
@@ -38,22 +38,29 @@ export function SharePanel({ shareToken }: { shareToken: string }) {
   }
 
   return (
-    <div className="my-4 flex flex-wrap items-center gap-4 rounded-lg border border-line p-3">
+    <div className="flex flex-col items-center gap-3 text-center">
       {qrDataUrl && (
-        <img src={qrDataUrl} alt="QR code to the live view of this session" width={112} height={112} />
+        // Always dark-on-white, even in dark mode: phone cameras read that best.
+        <img
+          src={qrDataUrl}
+          alt="QR code to the live view of this session"
+          width={160}
+          height={160}
+          className="rounded-lg bg-white p-2 ring-1 ring-line"
+        />
       )}
-      <div className="flex min-w-0 flex-col gap-1.5">
-        <p className="text-sm font-medium text-fg">Share this session</p>
-        <p className="max-w-xs truncate text-xs text-muted">{shareUrl}</p>
-        <Button
-          size="sm"
-          onClick={handleCopy}
-          className="w-fit"
-          icon={copied ? <Check className="h-4 w-4 text-primary" aria-hidden /> : <Copy className="h-4 w-4" aria-hidden />}
-        >
-          {copied ? 'Copied' : 'Copy link'}
-        </Button>
-      </div>
+      <p className="text-sm text-muted">Scan to follow live, translated into your own language.</p>
+      <p className="w-full select-all truncate rounded-md bg-subtle px-2 py-1 font-mono text-xs text-muted">
+        {shareUrl}
+      </p>
+      <Button
+        size="sm"
+        onClick={handleCopy}
+        className="w-full"
+        icon={copied ? <Check className="h-4 w-4 text-primary" aria-hidden /> : <Copy className="h-4 w-4" aria-hidden />}
+      >
+        {copied ? 'Copied' : 'Copy link'}
+      </Button>
     </div>
   )
 }
