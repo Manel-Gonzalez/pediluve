@@ -200,8 +200,8 @@ KAN-43 (`Nav`), KAN-44 (`AuthForm`, `NewSessionModal`), KAN-45 (`HomePage`), KAN
 with language badges, applied to both the live view and `SessionDetailPage`). Verified in a real
 browser (KAN-49).
 
-Phase 5 — QR code live viewer + TTS, all 20 subtasks under KAN-50 implemented on
-`feature/KAN-50`, not yet merged to `main`. Three milestones:
+Phase 5 — QR code live viewer + TTS, **merged to `main`** (PR #6): all 20 subtasks under KAN-50.
+Three milestones:
 - **Milestone A (viewer core):** KAN-51 (migration 005, `sessions.share_token`), KAN-52
   (`services/live_rooms.py` — `LiveRoom`/`LiveRoomRegistry`), KAN-53 (LAN reachability —
   `getApiUrl`/`getWebSocketUrl` derive their host from the page's own location, `vite.config.ts`
@@ -227,4 +227,5 @@ design). Real-device testing led to follow-up fixes and features on the same bra
 `docs/decisions.md`'s "Phase 5: changes after real-device testing" entry. Backend tests
 (`pytest`, 250) and frontend tests (`vitest`, 94) passing.
 
-Next: merge `feature/KAN-50` to `main`.
+Next: no phase in progress. Phase 6 is parked - start with its spike (see Phase gates) only if a
+real multi-mic use case shows up.
