@@ -130,3 +130,80 @@ export type TranslateResponse = {
   target_language: string
   translations: MessageTranslation[]
 }
+
+// ── /ws/view viewer models (KAN-50/KAN-56), matching backend/models/viewer.py
+
+export type LiveState = 'recording' | 'paused' | 'ended'
+
+export type LiveLineData = {
+  index: number
+  original_text: string
+  translated_text: string | null
+}
+
+export type JoinLiveMessage = {
+  type: 'join_live'
+  share_token: string
+  target_language: string
+}
+
+export type SetViewerLanguageMessage = {
+  type: 'set_viewer_language'
+  target_language: string
+}
+
+export type RequestAudioMessage = {
+  type: 'request_audio'
+  index: number
+}
+
+export type LiveJoinedMessage = {
+  type: 'live_joined'
+  title: string | null
+  source_language: string | null
+  target_language: string
+  state: LiveState
+  lines: LiveLineData[]
+}
+
+export type LiveLineMessage = {
+  type: 'live_line'
+  index: number
+  original_text: string
+  translated_text: string | null
+  target_language: string
+}
+
+export type LiveLinesRetranslatedMessage = {
+  type: 'live_lines_retranslated'
+  target_language: string
+  lines: LiveLineData[]
+}
+
+export type LiveStatusMessage = {
+  type: 'live_status'
+  state: LiveState
+}
+
+export type AudioReadyMessage = {
+  type: 'audio_ready'
+  index: number
+  target_language: string
+  audio_url: string
+  cached: boolean
+}
+
+export type AudioFailedMessage = {
+  type: 'audio_failed'
+  index: number
+  message: string
+}
+
+export type ViewerServerMessage =
+  | LiveJoinedMessage
+  | LiveLineMessage
+  | LiveLinesRetranslatedMessage
+  | LiveStatusMessage
+  | AudioReadyMessage
+  | AudioFailedMessage
+  | ErrorMessage

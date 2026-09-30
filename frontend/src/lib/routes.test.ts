@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { liveSessionPath, postLoginRedirect, sessionPath } from './routes'
+import { liveSessionPath, liveViewPath, postLoginRedirect, sessionPath } from './routes'
 
 describe('postLoginRedirect', () => {
   it('returns / when there is no state', () => {
@@ -29,5 +29,11 @@ describe('liveSessionPath', () => {
   it('builds a distinct path from sessionPath', () => {
     expect(liveSessionPath('abc-123')).toBe('/sessions/abc-123/live')
     expect(liveSessionPath('abc-123')).not.toBe(sessionPath('abc-123'))
+  })
+})
+
+describe('liveViewPath', () => {
+  it('builds the anonymous QR/share-link path', () => {
+    expect(liveViewPath('token-123')).toBe('/view/token-123')
   })
 })

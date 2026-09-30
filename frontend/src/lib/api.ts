@@ -37,6 +37,18 @@ export function getWebSocketUrl(location: LocationLike | undefined = currentLoca
   return `${protocol}://${host}:${BACKEND_PORT}/ws`
 }
 
+// The anonymous viewer counterpart to getWebSocketUrl (backend's /ws/view,
+// KAN-55) - derived from VITE_WS_URL by swapping its path when that's set,
+// so a deployment only needs to configure the one env var for both.
+export function getViewerWebSocketUrl(
+  location: LocationLike | undefined = currentLocation(),
+): string {
+  if (import.meta.env.VITE_WS_URL) return import.meta.env.VITE_WS_URL.replace(/\/ws$/, '/ws/view')
+  const protocol = location?.protocol === 'https:' ? 'wss' : 'ws'
+  const host = location?.hostname || 'localhost'
+  return `${protocol}://${host}:${BACKEND_PORT}/ws/view`
+}
+
 export function getChunkDurationMs(): number {
   return Number(import.meta.env.VITE_CHUNK_DURATION_MS) || 250
 }

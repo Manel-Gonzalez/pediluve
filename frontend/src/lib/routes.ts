@@ -23,3 +23,10 @@ export function sessionPath(id: string): string {
 export function liveSessionPath(id: string): string {
   return `/sessions/${id}/live`
 }
+
+// The QR/share link (KAN-50): a read-only, unauthenticated view of a live
+// session for anyone holding the token - not under /sessions, since it's
+// reachable without ever signing in (see App.tsx's routing).
+export function liveViewPath(shareToken: string): string {
+  return `/view/${shareToken}`
+}

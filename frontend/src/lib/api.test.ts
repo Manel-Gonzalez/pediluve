@@ -7,6 +7,7 @@ import {
   deleteSession,
   getApiUrl,
   getSession,
+  getViewerWebSocketUrl,
   getWebSocketUrl,
   listSessions,
 } from './api'
@@ -156,5 +157,23 @@ describe('getApiUrl / getWebSocketUrl LAN host derivation', () => {
     const location = { hostname: '192.168.1.42', protocol: 'http:' }
     expect(getApiUrl(location)).toBe('https://api.example.com')
     expect(getWebSocketUrl(location)).toBe('wss://api.example.com/ws')
+  })
+})
+
+describe('getViewerWebSocketUrl', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('derives the /ws/view path from the given location', () => {
+    const location = { hostname: '192.168.1.42', protocol: 'http:' }
+    expect(getViewerWebSocketUrl(location)).toBe('ws://192.168.1.42:8000/ws/view')
+  })
+
+  it('swaps the path on VITE_WS_URL rather than ignoring it', () => {
+    vi.stubEnv('VITE_WS_URL', 'wss://api.example.com/ws')
+    expect(getViewerWebSocketUrl({ hostname: 'ignored', protocol: 'http:' })).toBe(
+      'wss://api.example.com/ws/view',
+    )
   })
 })
