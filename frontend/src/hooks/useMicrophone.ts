@@ -53,7 +53,13 @@ export function useMicrophone(onChunk: (chunk: ArrayBuffer) => void, chunkDurati
       source.connect(workletNode)
       setStatus('recording')
       return sampleRate
-    } catch {
+    } catch (error) {
+      // Swallowed into a bare "error" status for the UI, but the actual
+      // cause (denied mic permission, no device, an insecure context
+      // rejecting getUserMedia outright, the AudioWorklet module failing
+      // to load) is worth knowing when this happens - only place it's
+      // visible at all is the browser console.
+      console.error('Could not start microphone capture:', error)
       setStatus('error')
       return null
     }
