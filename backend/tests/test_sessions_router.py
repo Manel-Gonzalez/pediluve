@@ -424,3 +424,82 @@ def test_translate_session_with_no_messages_returns_an_empty_list_and_does_not_c
 
     assert response.status_code == 200
     assert response.json()["translations"] == []
+
+
+# ── POST /api/shared/guest ───────────────────────────────────────────────
+
+
+def test_add_guest_returns_the_newly_accessible_session(monkeypatch, authed):
+    row = _session_row(
+        role="guest", guest_language="fr", share_token="share-token-123", message_count=0
+    )
+    calls = []
+
+    async def fake_add_session_guest(user, share_token, target_language):
+        calls.append((share_token, target_language))
+
+    async def fake_get_session_by_share_token(user, share_token):
+        assert share_token == "share-token-123"
+        return row
+
+    monkeypatch.setattr("routers.sessions.supabase.add_session_guest", fake_add_session_guest)
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_by_share_token", fake_get_session_by_share_token
+    )
+
+    response = client.post(
+        "/api/shared/guest", json={"share_token": "share-token-123", "target_language": "fr"}
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["id"] == row["id"]
+    assert body["role"] == "guest"
+    assert body["guest_language"] == "fr"
+    assert calls == [("share-token-123", "fr")]
+
+
+def test_add_guest_with_an_unknown_token_is_404(monkeypatch, authed):
+    async def failing_add_session_guest(user, share_token, target_language):
+        raise Exception("Session not found")
+
+    monkeypatch.setattr("routers.sessions.supabase.add_session_guest", failing_add_session_guest)
+
+    response = client.post("/api/shared/guest", json={"share_token": "does-not-exist"})
+
+    assert response.status_code == 404
+
+
+def test_add_guest_without_authorization_is_401():
+    response = client.post("/api/shared/guest", json={"share_token": "x"})
+    assert response.status_code == 401
+
+
+# ── DELETE /api/sessions/{id}/guest ──────────────────────────────────────
+
+
+def test_remove_guest_returns_204(monkeypatch, authed):
+    async def fake_remove_session_guest(user, session_id):
+        return True
+
+    monkeypatch.setattr("routers.sessions.supabase.remove_session_guest", fake_remove_session_guest)
+
+    response = client.delete(f"/api/sessions/{uuid.uuid4()}/guest")
+
+    assert response.status_code == 204
+
+
+def test_remove_guest_with_no_matching_membership_is_404(monkeypatch, authed):
+    async def fake_remove_session_guest(user, session_id):
+        return False
+
+    monkeypatch.setattr("routers.sessions.supabase.remove_session_guest", fake_remove_session_guest)
+
+    response = client.delete(f"/api/sessions/{uuid.uuid4()}/guest")
+
+    assert response.status_code == 404
+
+
+def test_remove_guest_with_a_non_uuid_id_is_404(authed):
+    response = client.delete("/api/sessions/not-a-uuid/guest")
+    assert response.status_code == 404

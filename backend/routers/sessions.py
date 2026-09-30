@@ -4,6 +4,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from models.sessions import (
+    AddGuestRequest,
     MessageTranslation,
     SessionCreate,
     SessionDetail,
@@ -107,6 +108,37 @@ async def delete_session(
     deleted = await supabase.delete_session(current_user, session_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Session not found")
+
+
+@router.post("/shared/guest", status_code=201, response_model=SessionSummary)
+async def add_guest(
+    request: AddGuestRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> SessionSummary:
+    # A bad/unknown token and any other RPC failure (see migration 008's
+    # add_session_guest) look the same from here - "not found" either way,
+    # same reasoning as every other share-token-or-session-id lookup in
+    # this file.
+    try:
+        await supabase.add_session_guest(current_user, request.share_token, request.target_language)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Session not found") from None
+
+    row = await supabase.get_session_by_share_token(current_user, request.share_token)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return SessionSummary(**row)
+
+
+@router.delete("/sessions/{session_id}/guest", status_code=204)
+async def remove_guest(
+    session_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> None:
+    _validate_uuid(session_id)
+    removed = await supabase.remove_session_guest(current_user, session_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Not a guest of this session")
 
 
 @router.post("/sessions/{session_id}/translate", response_model=TranslateResponse)
