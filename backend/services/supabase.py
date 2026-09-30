@@ -67,7 +67,15 @@ async def _attach_role_and_guest_language(client: AsyncClient, user: Authenticat
     )
     guest_languages = {row["session_id"]: row["target_language"] for row in guests_result.data}
     for row in rows:
-        if row["id"] in guest_languages:
+        # Ownership checked first: nothing stops an owner from also holding
+        # a session_guests row for their own session (e.g. scanning their
+        # own QR code while signed in), and owner must win if so - it's the
+        # stronger relationship, and the one that actually governs what
+        # they can do (rename/delete/etc. stay owner-only regardless).
+        if row["user_id"] == user.id:
+            row["role"] = "owner"
+            row["guest_language"] = None
+        elif row["id"] in guest_languages:
             row["role"] = "guest"
             row["guest_language"] = guest_languages[row["id"]]
         else:

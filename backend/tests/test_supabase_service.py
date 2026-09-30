@@ -411,6 +411,18 @@ async def test_list_sessions_marks_owned_sessions_with_role_owner(fake_client):
     assert rows[0]["guest_language"] is None
 
 
+async def test_list_sessions_prefers_owner_role_even_with_a_stray_guest_row(fake_client):
+    # e.g. an owner scanning their own QR code while signed in - ownership
+    # must win, since it's what actually governs rename/delete/etc.
+    session = await supabase.create_session(user(), title="Mine")
+    fake_client.store.setdefault("session_guests", []).append(
+        {"session_id": session["id"], "user_id": "user-1", "target_language": "fr"}
+    )
+    rows, _has_more = await supabase.list_sessions(user(), limit=20, offset=0)
+    assert rows[0]["role"] == "owner"
+    assert rows[0]["guest_language"] is None
+
+
 async def test_list_sessions_marks_guest_sessions_with_role_and_language(fake_client):
     session = await supabase.create_session(user(access_token="tok-owner", id="owner-1"), title="Theirs")
     fake_client.store.setdefault("session_guests", []).append(
