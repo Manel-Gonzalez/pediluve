@@ -1,8 +1,63 @@
 # Pédiluve 🎙️
 
-Real-time speech transcription and translation, running locally.
+[![CI](https://github.com/Manel-Gonzalez/pediluve/actions/workflows/ci.yml/badge.svg)](https://github.com/Manel-Gonzalez/pediluve/actions/workflows/ci.yml)
 
-Speak into your mic → see your words transcribed → see them translated → optionally hear the translation spoken back.
+**Speak in your language. Everyone in the room reads it, or hears it, in theirs, live on their own phone.**
+
+Pédiluve transcribes speech as you talk, translates each sentence, and shares the session through a
+QR code. Anyone who scans it follows along in the language they pick, with no account and no app to
+install, and can have each new line read aloud as it arrives.
+
+<p align="center">
+  <img src="docs/media/demo.gif" alt="Speaking on a laptop while a phone shows each sentence translated live" width="800">
+</p>
+
+## What it does
+
+- **Live transcription**: raw mic audio streams to ElevenLabs' realtime speech-to-text; text shows
+  up while you speak, and each sentence is committed about a second after you stop.
+- **Live translation**: every committed sentence is translated with DeepL and saved next to the
+  original.
+- **Share with a QR code**: listeners open a read-only live view on their phone and pick their own
+  language, with no sign-up. A "speaking…" bubble shows while a sentence is on its way.
+- **Listen instead of read**: tap *Listen live* and each new line is read aloud (ElevenLabs TTS).
+- **Keep it**: sessions are saved per account, with history, rename/delete, re-translation into
+  another language, and a `.txt` download. A signed-in listener can add a session to their own list.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/media/owner.png" alt="Owner's live view with the QR code" width="420"><br><sub>Speaker: live transcript + QR code</sub></td>
+    <td align="center"><img src="docs/media/viewer.png" alt="Listener's phone view" width="220"><br><sub>Listener: their language, on their phone</sub></td>
+    <td align="center"><img src="docs/media/history.png" alt="A saved session's transcript" width="420"><br><sub>History: every session, re-translatable</sub></td>
+  </tr>
+</table>
+
+## Technical highlights
+
+- **Streaming, not uploading.** An `AudioWorklet` sends raw PCM over a WebSocket; FastAPI proxies it
+  straight into ElevenLabs' realtime endpoint and relays partial/committed transcripts back. After
+  testing on real devices, the end-of-sentence delay was cut from 1.5 s to 1 s and the database
+  write was taken off the path to the screen.
+  ([why realtime](docs/decisions.md#real-time-elevenlabs-realtime-streaming-stt-not-rest-batch-chunks),
+  [latency work](docs/decisions.md#live-latency-shorter-vad-silence-save-off-the-critical-path-speaking-flag-kan-65))
+- **Anonymous listeners never touch the database.** They're served from an in-memory room that the
+  speaker's own connection fills. Fan-out goes through a queue with per-listener send timeouts, so
+  a slow phone can't stall the speaker. Each line is translated once per *language*, not once per
+  listener. ([design, D1–D6](docs/decisions.md#phase-5-qr-code-live-viewer-kan-50))
+- **The database enforces who sees what.** Every query runs with the signed-in user's own JWT under
+  Postgres Row Level Security, and the service-role key is never used. Listeners get a separate
+  WebSocket endpoint with no code path to speaker actions. Guest access goes through a
+  `SECURITY DEFINER` function that verifies the share token inside Postgres.
+  ([auth](docs/decisions.md#auth-supabase-js-on-the-client-jwt-verification--rls-via-user-token-on-the-backend),
+  [D6](docs/decisions.md#phase-5-qr-code-live-viewer-kan-50))
+- **Paid APIs are called once per line and language.** Generated speech is cached per
+  `(message, language)` in Supabase Storage, so listeners switching languages or replaying lines
+  can't run up the ElevenLabs bill.
+- **Tested, then verified on real phones.** The backend (`pytest`) and frontend (`vitest`) suites
+  run in CI on every push. Testing on real devices found bugs the unit tests couldn't, and each fix
+  is written up. ([what real devices changed](docs/decisions.md#phase-5-changes-after-real-device-testing-kan-50))
+- **Every decision is written down.** [`docs/decisions.md`](docs/decisions.md) records why each
+  piece was built the way it was, and what was rejected.
 
 ## Why
 
@@ -88,7 +143,8 @@ architecture.
 | Sharing | `qrcode` (frontend) | Plain SVG/data-URL QR code for a session's read-only live view link |
 | Persistence | Supabase (PostgreSQL) | Free tier, hosted, Row Level Security scopes data per user |
 
-Everything runs on `localhost`. No deployment in v1.
+Everything runs on `localhost`. No deployment in v1: for a demo outside your network, a temporary
+tunnel exposes it only while the demo runs (see [Public demo](#public-demo-through-a-temporary-tunnel-optional)).
 
 ## Roadmap
 
@@ -99,7 +155,8 @@ Everything runs on `localhost`. No deployment in v1.
 - [x] **Phase 4 — Session-first flow**: name and create a session explicitly (home page → "New session"), its live view joins that session over the WebSocket and can be paused/resumed without ending it, a past session's full transcript is a read-only page, re-translate it to another language on demand, rename/delete from the home list
 - [x] **Phase 4.5 — Visual design**: Tailwind CSS with a small design-token system (colors, type scale), every page/component migrated off hand-written CSS, a redesigned paired-card transcript view
 - [x] **Phase 5 — QR code live viewer + TTS**: a QR code / share link gives anyone a read-only live view of a session, translating live into their own language, no account needed; a signed-in viewer can add it to their own sessions; play a translated line back, generated once and cached in Supabase Storage, for the owner and viewers alike
-- [ ] **Phase 6 — Spike** *(current)*: speaker labels, only if a real multi-mic use case shows up; further voice-activity-detection tuning
+- [x] **After Phase 5 — Real-device polish**: lower live latency (1 s end-of-sentence, database write off the path to the screen), a "speaking…" indicator for listeners, a one-command public demo through a temporary tunnel
+- [ ] **Phase 6 — Spike** *(parked)*: speaker labels, only if a real multi-mic use case shows up; further voice-activity-detection tuning
 
 ## Running locally
 
