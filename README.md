@@ -117,7 +117,7 @@ cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp ../.env.example .env   # fill in your keys (ElevenLabs, DeepL, Supabase URL + anon key)
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn main:app --reload --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 3
 ```
 
 `--host 0.0.0.0` (not just `localhost`) so a phone on the same Wi-Fi can reach the backend too -
@@ -125,6 +125,11 @@ needed for the QR live viewer (KAN-50): the mic-capturing owner needs a secure c
 recording on `http://localhost:5173`, but the anonymous viewer opens the share link at your
 machine's LAN IP instead. Add that LAN origin (e.g. `http://192.168.1.42:5173`) to `CORS_ORIGINS`
 in `backend/.env` alongside `http://localhost:5173`.
+
+`--timeout-graceful-shutdown 3` caps how long Ctrl+C waits for open connections. Without it, on
+Windows (Python 3.12, asyncio's default event loop) uvicorn can hang forever at "Shutting down"
+while a viewer's `/ws/view` socket is still open: it waits in `asyncio.Server.wait_closed()`,
+which a second Ctrl+C doesn't interrupt. With the flag it gives up after 3 seconds and exits.
 
 ### Frontend
 
