@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from models.messages import ErrorMessage
 from models.viewer import (
     AudioFailed,
+    AudioReady,
     JoinLive,
     LiveJoined,
     LiveLineOut,
@@ -15,7 +16,7 @@ from models.viewer import (
     RequestAudio,
     SetViewerLanguage,
 )
-from services import deepl, live_rooms
+from services import deepl, live_rooms, tts_cache
 
 logger = logging.getLogger(__name__)
 
@@ -175,11 +176,36 @@ class ViewerConnectionHandler:
             await self.send(ErrorMessage(message=f"Invalid message: {exc}").model_dump())
             return
 
-        # Real TTS caching lands in KAN-58 (Milestone B) - accepted here
-        # already so a viewer build shipped before then gets a clean
-        # "not available" instead of an "unknown message type" error.
+        assert self.room is not None
+        index = request.index
+        if index < 0 or index >= len(self.room.lines):
+            await self.send(AudioFailed(index=index, message="No such line").model_dump())
+            return
+
+        line = self.room.lines[index]
+        language = self.target_language
+        translated_text = line.translations.get(language)
+
+        # Every one of these is "can't offer playback for this line right
+        # now" - a save that failed (no message_id, see routers/ws.py), a
+        # translation that hasn't arrived or failed (no text to speak), or
+        # (shouldn't happen while a room exists, but defensive) no owner
+        # connection to borrow credentials from.
+        if line.message_id is None or translated_text is None or self.room.owner_user is None:
+            await self.send(AudioFailed(index=index, message="Audio unavailable").model_dump())
+            return
+
+        try:
+            audio_url, cached = await tts_cache.get_or_create_audio_url(
+                self.room.owner_user, self.room.session_id, line.message_id, translated_text, language
+            )
+        except Exception:
+            logger.exception("Could not generate audio for message %s (%s)", line.message_id, language)
+            await self.send(AudioFailed(index=index, message="Audio unavailable").model_dump())
+            return
+
         await self.send(
-            AudioFailed(index=request.index, message="Audio playback isn't available yet").model_dump()
+            AudioReady(index=index, target_language=language, audio_url=audio_url, cached=cached).model_dump()
         )
 
     def _cleanup(self) -> None:

@@ -43,7 +43,7 @@ def fake_backends(monkeypatch):
 
 
 async def test_a_cache_miss_synthesizes_uploads_and_caches(fake_backends):
-    url = await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "fr")
+    url, cached = await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "fr")
 
     assert fake_backends["synthesize"] == ["hola"]
     assert fake_backends["upload_audio"] == [("owner-1/session-1/message-1.fr.mp3", b"audio-bytes")]
@@ -55,15 +55,17 @@ async def test_a_cache_miss_synthesizes_uploads_and_caches(fake_backends):
         }
     ]
     assert url == "https://signed.example/owner-1/session-1/message-1.fr.mp3"
+    assert cached is False
 
 
 async def test_a_cache_hit_never_calls_synthesize_or_upload_again(fake_backends):
     await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "fr")
-    url = await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "fr")
+    url, cached = await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "fr")
 
     assert fake_backends["synthesize"] == ["hola"]
     assert fake_backends["upload_audio"] == [("owner-1/session-1/message-1.fr.mp3", b"audio-bytes")]
     assert url == "https://signed.example/owner-1/session-1/message-1.fr.mp3"
+    assert cached is True
 
 
 async def test_different_languages_for_the_same_message_are_cached_separately(fake_backends):
