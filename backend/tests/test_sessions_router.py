@@ -503,3 +503,115 @@ def test_remove_guest_with_no_matching_membership_is_404(monkeypatch, authed):
 def test_remove_guest_with_a_non_uuid_id_is_404(authed):
     response = client.delete("/api/sessions/not-a-uuid/guest")
     assert response.status_code == 404
+
+
+# ── GET /api/sessions/{id}/transcript ────────────────────────────────────
+
+
+def test_download_transcript_with_no_target_language_uses_the_stored_translation(monkeypatch, authed):
+    row = _session_row(title="Standup")
+    row["messages"] = [
+        {
+            "id": "m1",
+            "sequence": 0,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "original_text": "hola",
+            "translated_text": "hello",
+            "target_language": "en",
+        },
+        {
+            "id": "m2",
+            "sequence": 1,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "original_text": "mundo",
+            "translated_text": None,
+            "target_language": None,
+        },
+    ]
+
+    async def fake_get_session_with_messages(user, session_id):
+        return row
+
+    async def unexpected_translate_many(*args, **kwargs):
+        raise AssertionError("deepl.translate_many should not be called with no target_language")
+
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_with_messages", fake_get_session_with_messages
+    )
+    monkeypatch.setattr("routers.sessions.deepl.translate_many", unexpected_translate_many)
+
+    response = client.get(f"/api/sessions/{row['id']}/transcript")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/plain; charset=utf-8"
+    assert response.text == "hola\n→ hello\n\nmundo\n"
+
+
+def test_download_transcript_with_a_target_language_re_translates(monkeypatch, authed):
+    row = _session_row(title="Standup")
+    row["messages"] = [
+        {
+            "id": "m1",
+            "sequence": 0,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "original_text": "hola",
+            "translated_text": "hello",
+            "target_language": "en",
+        }
+    ]
+
+    async def fake_get_session_with_messages(user, session_id):
+        return row
+
+    async def fake_translate_many(texts, target_language):
+        assert target_language == "fr"
+        return [f"[fr] {text}" for text in texts]
+
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_with_messages", fake_get_session_with_messages
+    )
+    monkeypatch.setattr("routers.sessions.deepl.translate_many", fake_translate_many)
+
+    response = client.get(f"/api/sessions/{row['id']}/transcript?target_language=fr")
+
+    assert response.status_code == 200
+    assert "[fr] hola" in response.text
+
+
+def test_download_transcript_sets_content_disposition_with_the_title(monkeypatch, authed):
+    row = _session_row(title="Café meeting")
+    row["messages"] = []
+
+    async def fake_get_session_with_messages(user, session_id):
+        return row
+
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_with_messages", fake_get_session_with_messages
+    )
+
+    response = client.get(f"/api/sessions/{row['id']}/transcript")
+
+    disposition = response.headers["content-disposition"]
+    assert 'filename="Caf meeting.txt"' in disposition
+    assert "filename*=UTF-8''Caf%C3%A9%20meeting.txt" in disposition
+
+
+def test_download_transcript_with_an_unsupported_language_is_400(authed):
+    response = client.get(f"/api/sessions/{uuid.uuid4()}/transcript?target_language=xx")
+    assert response.status_code == 400
+
+
+def test_download_transcript_with_an_unknown_session_is_404(monkeypatch, authed):
+    async def fake_get_session_with_messages(user, session_id):
+        return None
+
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_with_messages", fake_get_session_with_messages
+    )
+    response = client.get(f"/api/sessions/{uuid.uuid4()}/transcript")
+    assert response.status_code == 404
+
+
+def test_download_transcript_without_authorization_is_401():
+    response = client.get(f"/api/sessions/{uuid.uuid4()}/transcript")
+    assert response.status_code == 401

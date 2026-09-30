@@ -1,7 +1,8 @@
 import logging
 import uuid
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from models.sessions import (
     AddGuestRequest,
@@ -174,4 +175,73 @@ async def translate_session(
             MessageTranslation(message_id=message["id"], translated_text=translated_text)
             for message, translated_text in zip(messages, translated_texts)
         ],
+    )
+
+
+def _transcript_filename(title: str | None, target_language: str | None) -> str:
+    name = title or "session"
+    if target_language is not None:
+        name = f"{name} ({target_language})"
+    return f"{name}.txt"
+
+
+def _content_disposition(filename: str) -> str:
+    # RFC 5987: filename* carries the real (possibly non-ASCII) name,
+    # percent-encoded; filename= stays a plain-ASCII fallback for clients
+    # that don't understand filename* at all - a title with no non-ASCII
+    # characters makes the two identical.
+    ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or "transcript.txt"
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
+
+
+def _format_transcript(messages: list[dict], translated_texts: list[str | None]) -> str:
+    lines: list[str] = []
+    for message, translated_text in zip(messages, translated_texts):
+        lines.append(message["original_text"])
+        if translated_text:
+            lines.append(f"→ {translated_text}")
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
+
+
+@router.get("/sessions/{session_id}/transcript")
+async def download_transcript(
+    session_id: str,
+    target_language: str | None = Query(default=None),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> Response:
+    # Plain-text download of a stored session's transcript - re-translated
+    # to target_language on demand (nothing written, same as POST .../
+    # translate) if given, otherwise each message's own stored
+    # translated_text (the original live-session translation).
+    _validate_uuid(session_id)
+    if target_language is not None and target_language not in deepl.SUPPORTED_TARGET_LANGUAGES:
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported target language: {target_language}"
+        )
+
+    row = await supabase.get_session_with_messages(current_user, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    messages = row["messages"]
+    if target_language is not None:
+        translated_texts = (
+            await deepl.translate_many(
+                [message["original_text"] for message in messages], target_language
+            )
+            if messages
+            else []
+        )
+    else:
+        translated_texts = [message["translated_text"] for message in messages]
+
+    return Response(
+        content=_format_transcript(messages, translated_texts),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": _content_disposition(
+                _transcript_filename(row["title"], target_language)
+            )
+        },
     )
