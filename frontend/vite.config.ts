@@ -2,8 +2,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // uvicorn's dev address. The browser never calls it directly: everything
-// goes through this dev server's proxy below (KAN-66).
-const BACKEND = 'http://localhost:8000'
+// goes through this dev server's proxy below (KAN-66). 127.0.0.1 rather
+// than "localhost": uvicorn binds IPv4 only by default, and on Windows
+// "localhost" can resolve to ::1 first.
+const BACKEND = 'http://127.0.0.1:8000'
 
 export default defineConfig({
   plugins: [react()],
