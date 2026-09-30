@@ -3,10 +3,12 @@ import json
 import os
 from collections.abc import AsyncIterator
 
+import httpx
 import websockets
 from websockets.asyncio.client import ClientConnection
 
 REALTIME_URL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
+TTS_API_URL = "https://api.elevenlabs.io/v1/text-to-speech"
 
 
 class RealtimeTranscriptionSession:
@@ -47,5 +49,31 @@ class RealtimeTranscriptionSession:
             self._connection = None
 
 
+_tts_client: httpx.AsyncClient | None = None
+
+
+def _get_tts_client() -> httpx.AsyncClient:
+    global _tts_client
+    if _tts_client is None:
+        _tts_client = httpx.AsyncClient(timeout=30.0)
+    return _tts_client
+
+
 async def synthesize(text: str) -> bytes:
-    raise NotImplementedError("TTS wired up in Phase 4")
+    # One fixed voice for v1 (CLAUDE.md) - no per-language voice mapping, no
+    # voice_id parameter here. Callers (services/tts_cache.py) never call
+    # this more than once per (message, language): the cache is the whole
+    # point, since this is a paid call per invocation.
+    api_key = os.environ["ELEVENLABS_API_KEY"].strip()
+    voice_id = os.environ["ELEVENLABS_VOICE_ID"].strip()
+    if not voice_id:
+        raise RuntimeError("ELEVENLABS_VOICE_ID is not set - see .env.example")
+
+    client = _get_tts_client()
+    response = await client.post(
+        f"{TTS_API_URL}/{voice_id}",
+        headers={"xi-api-key": api_key, "Content-Type": "application/json"},
+        json={"text": text, "model_id": "eleven_multilingual_v2"},
+    )
+    response.raise_for_status()
+    return response.content
