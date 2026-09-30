@@ -1,11 +1,14 @@
 import base64
 import json
+import logging
 import os
 from collections.abc import AsyncIterator
 
 import httpx
 import websockets
 from websockets.asyncio.client import ClientConnection
+
+logger = logging.getLogger(__name__)
 
 REALTIME_URL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
 TTS_API_URL = "https://api.elevenlabs.io/v1/text-to-speech"
@@ -75,5 +78,11 @@ async def synthesize(text: str) -> bytes:
         headers={"xi-api-key": api_key, "Content-Type": "application/json"},
         json={"text": text, "model_id": "eleven_multilingual_v2"},
     )
+    if response.status_code >= 400:
+        # raise_for_status()'s own exception message doesn't include the
+        # response body - ElevenLabs' error responses are JSON explaining
+        # *why* (insufficient quota vs. a voice/model not available on this
+        # plan vs. something else entirely), which is otherwise invisible.
+        logger.error("ElevenLabs TTS request failed (%s): %s", response.status_code, response.text)
     response.raise_for_status()
     return response.content
