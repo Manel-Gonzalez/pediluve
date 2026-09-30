@@ -28,6 +28,9 @@ export function useWebSocket(session: Session, sessionId: string) {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [joinStatus, setJoinStatus] = useState<JoinStatus>('joining')
   const [title, setTitle] = useState<string | null>(null)
+  // The session's QR/share-link token (KAN-50), set once session_joined
+  // arrives - consumed by the Share panel (KAN-57).
+  const [shareToken, setShareToken] = useState<string | null>(null)
   const [messages, setMessages] = useState<LogMessage[]>([])
   const [partialTranscript, setPartialTranscript] = useState('')
   const [transcriptRows, setTranscriptRows] = useState<TranscriptMessage[]>([])
@@ -82,6 +85,7 @@ export function useWebSocket(session: Session, sessionId: string) {
       }
       if (data.type === 'session_joined') {
         setTitle(data.title)
+        setShareToken(data.share_token)
         setTranscriptRows(data.transcripts)
         // Replaces the old "send DEFAULT_TARGET_LANGUAGE once authenticated"
         // behavior: a session already has its own target_language (null for
@@ -164,6 +168,7 @@ export function useWebSocket(session: Session, sessionId: string) {
     isAuthenticated,
     joinStatus,
     title,
+    shareToken,
     messages,
     partialTranscript,
     transcriptRows,

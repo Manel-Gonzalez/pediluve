@@ -64,6 +64,8 @@ export type SessionJoinedMessage = {
   source_language: string | null
   target_language: string | null
   transcripts: TranscriptMessage[]
+  // The capability token for this session's QR/share link (KAN-50).
+  share_token: string
 }
 
 // Sent when the target language changes mid-session and there's already

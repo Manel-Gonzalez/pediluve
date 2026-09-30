@@ -9,6 +9,7 @@ from starlette.testclient import WebSocketDisconnect
 
 from main import app
 import routers.ws as ws_module
+from services import live_rooms
 from services.auth import AuthenticatedUser, AuthError, AuthServiceUnavailable
 
 client = TestClient(app)
@@ -65,6 +66,12 @@ class _FakeSupabase:
         source_language: str | None = None,
         target_language: str | None = None,
         messages: list | None = None,
+        # Simulates a future guest-visible RLS row (KAN-59): the row is
+        # returned by get_session_with_messages even to a non-owner, so
+        # tests can exercise ws.py's own explicit ownership guard (KAN-54)
+        # independent of RLS.
+        guest_visible: bool = False,
+        share_token: str | None = None,
     ) -> str:
         session_id = str(uuid.uuid4())
         self.sessions[session_id] = {
@@ -74,6 +81,8 @@ class _FakeSupabase:
             "source_language": source_language,
             "target_language": target_language,
             "ended_at": None,
+            "share_token": share_token or str(uuid.uuid4()),
+            "guest_visible": guest_visible,
         }
         for index, message in enumerate(messages or []):
             if isinstance(message, str):
@@ -91,7 +100,9 @@ class _FakeSupabase:
 
     async def get_session_with_messages(self, user, session_id):
         session = self.sessions.get(session_id)
-        if session is None or session["user_id"] != user.id:
+        if session is None:
+            return None
+        if session["user_id"] != user.id and not session["guest_visible"]:
             return None
         messages = sorted(
             (m for m in self.messages if m["session_id"] == session_id),
@@ -382,6 +393,7 @@ def test_join_session_returns_stored_transcripts(fake_supabase, authenticated_ws
                     "target_language": "es",
                 },
             ],
+            "share_token": fake_supabase.sessions[session_id]["share_token"],
         }
 
 
@@ -397,6 +409,22 @@ def test_join_session_with_an_unknown_id_is_rejected_and_closed(authenticated_ws
 
 def test_join_session_owned_by_another_user_is_rejected_and_closed(fake_supabase, authenticated_ws):
     session_id = fake_supabase.seed_session(user_id=OTHER_USER.id)
+
+    with authenticated_ws() as ws:
+        ws.send_json({"type": "join_session", "session_id": session_id})
+        error = ws.receive_json()
+        assert error["type"] == "error"
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            ws.receive_json()
+        assert exc_info.value.code == ws_module.SESSION_NOT_FOUND_CLOSE_CODE
+
+
+def test_join_session_visible_but_not_owned_is_rejected_and_closed(fake_supabase, authenticated_ws):
+    # Simulates a future guest-visible RLS row (KAN-59): the row itself is
+    # returned by get_session_with_messages (guest_visible=True), so this
+    # guard must be ws.py's own explicit ownership check, not just RLS -
+    # a guest must never be able to open the owner's live/recording view.
+    session_id = fake_supabase.seed_session(user_id=OTHER_USER.id, guest_visible=True)
 
     with authenticated_ws() as ws:
         ws.send_json({"type": "join_session", "session_id": session_id})
@@ -1315,4 +1343,143 @@ def test_committed_transcript_with_no_target_language_persists_null_translation(
 
     saved = next(m for m in fake_supabase.messages if m["session_id"] == session_id)
     assert saved["translated_text"] is None
-    assert saved["target_language"] is None
+
+
+# ── live room (KAN-50/KAN-54) ───────────────────────────────────────────
+
+
+class FakeViewer:
+    def __init__(self):
+        self.received: list[dict] = []
+
+    async def send(self, payload: dict) -> None:
+        self.received.append(payload)
+
+
+@pytest.fixture(autouse=True)
+def _reset_live_room_registry():
+    # A module-level singleton (services.live_rooms.registry) - cleared
+    # around every test so a leftover room from one test can't leak into
+    # the next.
+    live_rooms.registry._rooms.clear()
+    yield
+    live_rooms.registry._rooms.clear()
+
+
+def test_join_session_acquires_a_live_room_keyed_by_share_token(joined_ws, fake_supabase):
+    with joined_ws() as (ws, session_id):
+        share_token = fake_supabase.sessions[session_id]["share_token"]
+        room = live_rooms.registry.get(share_token)
+        assert room is not None
+        assert room.session_id == session_id
+        assert room.refcount == 1
+
+
+def test_starting_and_stopping_transcription_broadcasts_room_status(
+    monkeypatch, joined_ws, fake_supabase
+):
+    fake_cls = make_fake_session_class([])
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with joined_ws() as (ws, session_id):
+        share_token = fake_supabase.sessions[session_id]["share_token"]
+        room = live_rooms.registry.get(share_token)
+        assert room.state == "paused"
+
+        ws.send_json({"type": "start_transcription"})
+        ws.send_json({"type": "message", "text": "sync"})
+        assert ws.receive_json() == {"type": "echo", "text": "sync"}
+        assert room.state == "recording"
+
+        ws.send_json({"type": "stop_transcription"})
+        ws.send_json({"type": "message", "text": "sync"})
+        assert ws.receive_json() == {"type": "echo", "text": "sync"}
+        assert room.state == "paused"
+
+
+def test_disconnect_broadcasts_ended_status_and_releases_the_room(joined_ws, fake_supabase):
+    with joined_ws() as (ws, session_id):
+        share_token = fake_supabase.sessions[session_id]["share_token"]
+        room = live_rooms.registry.get(share_token)
+        viewer = FakeViewer()
+        room.add_viewer(viewer, "fr")
+
+    assert live_rooms.registry.get(share_token) is None
+    assert viewer.received[-1] == {"type": "live_status", "state": "ended"}
+
+
+def test_committed_transcript_is_published_to_room_viewers(monkeypatch, joined_ws, fake_supabase):
+    async def fake_translate(text, target_language):
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", fake_translate)
+
+    canned = [{"message_type": "committed_transcript", "text": "hola"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with joined_ws() as (ws, session_id):
+        share_token = fake_supabase.sessions[session_id]["share_token"]
+        room = live_rooms.registry.get(share_token)
+        viewer = FakeViewer()
+        room.add_viewer(viewer, "es")
+
+        ws.send_json({"type": "start_transcription"})
+        assert ws.receive_json() == {
+            "type": "transcript",
+            "original_text": "hola",
+            "translated_text": None,
+            "target_language": None,
+        }
+        # Synchronization barrier: the room worker is a separate asyncio
+        # task fed by a non-blocking queue, not awaited inline by the
+        # message handler - give it a couple of round trips to finish.
+        ws.send_json({"type": "message", "text": "sync"})
+        assert ws.receive_json() == {"type": "echo", "text": "sync"}
+        ws.send_json({"type": "stop_transcription"})
+
+    lines = [m for m in viewer.received if m["type"] == "live_line"]
+    assert lines == [
+        {
+            "type": "live_line",
+            "index": 0,
+            "original_text": "hola",
+            "translated_text": "[es] hola",
+            "target_language": "es",
+        }
+    ]
+
+
+def test_publishing_to_the_room_never_blocks_saving_or_sending_the_owners_own_transcript(
+    monkeypatch, joined_ws, fake_supabase
+):
+    # A viewer whose translation would hang forever must not stall the
+    # owner's own transcript getting saved and echoed back.
+    hung = asyncio.Event()
+
+    async def hanging_translate(text, target_language):
+        await hung.wait()
+        return "never"
+
+    monkeypatch.setattr("routers.ws.deepl.translate", hanging_translate)
+
+    canned = [{"message_type": "committed_transcript", "text": "hola"}]
+    fake_cls = make_fake_session_class(canned)
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", fake_cls)
+
+    with joined_ws() as (ws, session_id):
+        share_token = fake_supabase.sessions[session_id]["share_token"]
+        room = live_rooms.registry.get(share_token)
+        room.add_viewer(FakeViewer(), "de")
+
+        ws.send_json({"type": "start_transcription"})
+        assert ws.receive_json() == {
+            "type": "transcript",
+            "original_text": "hola",
+            "translated_text": None,
+            "target_language": None,
+        }
+        ws.send_json({"type": "stop_transcription"})
+
+    saved = [m for m in fake_supabase.messages if m["session_id"] == session_id]
+    assert [m["original_text"] for m in saved] == ["hola"]

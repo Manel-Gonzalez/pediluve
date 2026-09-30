@@ -80,6 +80,9 @@ class SessionJoined(BaseModel):
     source_language: str | None
     target_language: str | None
     transcripts: list[Transcript]
+    # The capability token for this session's QR/share link (KAN-50) - lets
+    # the owner's live view render the Share panel without a separate fetch.
+    share_token: str
 
 
 class RetranslatedTranscripts(BaseModel):

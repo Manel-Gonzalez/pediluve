@@ -63,6 +63,25 @@ class LiveRoom:
     def set_status(self, state: str) -> None:
         self.state = state
 
+    async def broadcast_status(self, state: str) -> None:
+        # Unlike publish(), this never involves DeepL, so it's cheap enough
+        # to send directly rather than going through the queue - but still
+        # per-viewer timeout-guarded, same reasoning as _broadcast_line.
+        self.state = state
+        if not self.viewers:
+            return
+
+        async def _send_to(viewer: Viewer) -> None:
+            try:
+                await asyncio.wait_for(
+                    viewer.send({"type": "live_status", "state": state}),
+                    timeout=_SEND_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                logger.warning("Dropped a live_status send to a slow or failed viewer")
+
+        await asyncio.gather(*(_send_to(viewer) for viewer, _ in self.viewers.values()))
+
     def publish(
         self,
         original_text: str,

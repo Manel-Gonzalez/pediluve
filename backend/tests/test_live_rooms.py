@@ -151,6 +151,30 @@ def test_snapshot_returns_lines_in_a_given_language():
     ]
 
 
+async def test_broadcast_status_updates_state_and_notifies_viewers():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    viewer = FakeViewer()
+    room.add_viewer(viewer, "fr")
+
+    await room.broadcast_status("recording")
+
+    assert room.state == "recording"
+    assert viewer.received == [{"type": "live_status", "state": "recording"}]
+
+
+async def test_broadcast_status_with_no_viewers_still_updates_state():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    await room.broadcast_status("ended")
+    assert room.state == "ended"
+
+
+async def test_broadcast_status_does_not_raise_when_a_viewer_send_fails():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    room.add_viewer(FakeViewer(fail=True), "fr")
+    await room.broadcast_status("paused")
+    assert room.state == "paused"
+
+
 def test_add_update_remove_viewer():
     room = LiveRoom(session_id="s1", title=None, source_language=None)
     viewer = FakeViewer()
