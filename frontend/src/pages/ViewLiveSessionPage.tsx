@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { CircleCheck, CirclePause, Download, Headphones, Hourglass, Unplug } from 'lucide-react'
+import { ArrowDown, CircleCheck, CirclePause, Download, Headphones, Hourglass, Unplug } from 'lucide-react'
 import { AddToMySessions } from '../components/AddToMySessions'
 import { Button } from '../components/Button'
 import { IconButton } from '../components/IconButton'
@@ -10,6 +10,7 @@ import { ThemeToggle } from '../components/ThemeToggle'
 import { useAudioPlayer } from '../hooks/useAudioPlayer'
 import { useLiveListen } from '../hooks/useLiveListen'
 import { useLiveViewer } from '../hooks/useLiveViewer'
+import { useStickToBottom } from '../hooks/useStickToBottom'
 import { saveBlob, transcriptFilename } from '../lib/download'
 import { SUPPORTED_LANGUAGES } from '../lib/languageControls'
 import { languageName } from '../lib/languageLabel'
@@ -47,6 +48,7 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
   const listen = useLiveListen({ lines, audioUrls, audioErrors, requestAudio, play, stop, unlock })
   const controls = viewerControls({ joinStatus, state, speaking, seenRecording, linesCount: lines.length })
   const transcriptText = buildLiveTranscriptText(lines)
+  const { unseen, jumpToLatest } = useStickToBottom(lines.length, controls.showSpeaking)
   // The line whose Play was tapped before its audio existed yet - played
   // automatically once audio_ready arrives, so that first tap isn't just
   // a silent "fetch" that needs a second tap to actually hear anything.
@@ -243,6 +245,20 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
 
           {controls.overlay !== 'none' && <WaitingOverlay kind={controls.overlay} />}
         </section>
+
+        {unseen > 0 && (
+          <div className="pointer-events-none fixed inset-x-0 bottom-6 z-20 flex justify-center">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={jumpToLatest}
+              icon={<ArrowDown className="h-4 w-4" aria-hidden />}
+              className="pointer-events-auto rounded-full shadow-lg"
+            >
+              {unseen} new line{unseen === 1 ? '' : 's'}
+            </Button>
+          </div>
+        )}
       </main>
     </div>
   )
