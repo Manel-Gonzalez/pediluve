@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { useNavigate } from 'react-router-dom'
+import { Plus } from 'lucide-react'
+import { Button } from '../components/Button'
 import { NewSessionModal } from '../components/NewSessionModal'
 import { SessionListRow } from '../components/SessionListRow'
 import { useAuth } from '../hooks/useAuth'
@@ -26,6 +28,7 @@ function HomePageContent({ session }: { session: Session }) {
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
 
   const loadPage = useCallback(
     async (offset: number, append: boolean) => {
@@ -79,7 +82,9 @@ function HomePageContent({ session }: { session: Session }) {
     <main className="max-w-2xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-semibold text-fg">Your sessions</h1>
-        <NewSessionModal session={session} />
+        <Button variant="primary" icon={<Plus className="h-4 w-4" aria-hidden />} onClick={() => setCreating(true)}>
+          New session
+        </Button>
       </div>
 
       {loading && <p className="text-muted">Loading…</p>}
@@ -117,6 +122,7 @@ function HomePageContent({ session }: { session: Session }) {
           {loadingMore ? 'Loading…' : 'Load more'}
         </button>
       )}
+      <NewSessionModal session={session} open={creating} onClose={() => setCreating(false)} />
     </main>
   )
 }

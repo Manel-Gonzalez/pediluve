@@ -29,6 +29,13 @@ export function formatSessionTitle(session: SessionSummary): string {
   return `Untitled - ${new Date(session.created_at).toLocaleDateString()}`
 }
 
+// The ConfirmDialog body for deleting a session (KAN-77).
+export function deleteConfirmationText(session: SessionSummary): string {
+  const count = session.message_count
+  const messages = count > 0 ? ` and its ${count} message${count === 1 ? '' : 's'}` : ''
+  return `"${formatSessionTitle(session)}"${messages} will be deleted for good. This can't be undone.`
+}
+
 // "Load more" appends a page rather than replacing the list - the rows
 // already on screen must stay while a further page loads.
 export function appendSessions(

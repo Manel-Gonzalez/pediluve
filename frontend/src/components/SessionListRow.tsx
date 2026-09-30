@@ -5,8 +5,9 @@ import { Link } from 'react-router-dom'
 import { ApiError, deleteSession, removeGuestSession, renameSession } from '../lib/api'
 import { sessionPath } from '../lib/routes'
 import { validateSessionTitle } from '../lib/sessionTitle'
-import { formatSessionTitle } from '../lib/sessions'
+import { deleteConfirmationText, formatSessionTitle } from '../lib/sessions'
 import type { SessionSummary } from '../lib/types'
+import { ConfirmDialog } from './ConfirmDialog'
 import { IconButton } from './IconButton'
 
 // Keeps the input focused when its own check/x buttons are pressed - blur
@@ -27,6 +28,7 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
   const [draftTitle, setDraftTitle] = useState(item.title ?? '')
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  const [confirming, setConfirming] = useState<'delete' | 'remove' | null>(null)
 
   const startEditing = () => {
     setDraftTitle(item.title ?? '')
@@ -73,23 +75,18 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
     }
   }
 
+  // Both run inside ConfirmDialog: a thrown error keeps it open and shows
+  // the message there. A 404 means it's already gone - drop the row.
   const handleDelete = async () => {
-    const confirmed = window.confirm(
-      `Delete "${formatSessionTitle(item)}" and its ${item.message_count} message${
-        item.message_count === 1 ? '' : 's'
-      }?`,
-    )
-    if (!confirmed) return
-
     try {
       await deleteSession(session, item.id)
       onDeleted(item.id)
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         onMissing(item.id)
+        return
       }
-      // Any other failure leaves the row in place - Delete stays clickable
-      // to retry, no extra error UI needed for this rare path.
+      throw err
     }
   }
 
@@ -98,16 +95,15 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
   // session_guests row - the session itself, and everyone else's access to
   // it, is untouched.
   const handleRemoveGuestSession = async () => {
-    const confirmed = window.confirm(`Remove "${formatSessionTitle(item)}" from your sessions?`)
-    if (!confirmed) return
-
     try {
       await removeGuestSession(session, item.id)
       onDeleted(item.id)
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         onMissing(item.id)
+        return
       }
+      throw err
     }
   }
 
@@ -160,7 +156,7 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
       )}
       <div className="flex shrink-0 gap-1">
         {item.role === 'guest' ? (
-          <IconButton label="Remove from my sessions" tone="danger" onClick={handleRemoveGuestSession}>
+          <IconButton label="Remove from my sessions" tone="danger" onClick={() => setConfirming('remove')}>
             <UserMinus className="h-4 w-4" aria-hidden />
           </IconButton>
         ) : (
@@ -168,12 +164,32 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
             <IconButton label="Rename session" onClick={startEditing} disabled={isEditing}>
               <Pencil className="h-4 w-4" aria-hidden />
             </IconButton>
-            <IconButton label="Delete session" tone="danger" onClick={handleDelete}>
+            <IconButton label="Delete session" tone="danger" onClick={() => setConfirming('delete')}>
               <Trash2 className="h-4 w-4" aria-hidden />
             </IconButton>
           </>
         )}
       </div>
+      <ConfirmDialog
+        open={confirming === 'delete'}
+        onClose={() => setConfirming(null)}
+        title="Delete this session?"
+        description={deleteConfirmationText(item)}
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        tone="danger"
+        onConfirm={handleDelete}
+      />
+      <ConfirmDialog
+        open={confirming === 'remove'}
+        onClose={() => setConfirming(null)}
+        title="Remove from your sessions?"
+        description={`"${formatSessionTitle(item)}" will disappear from your list. The session itself stays with its owner, and you can add it again from its share link.`}
+        confirmLabel="Remove"
+        pendingLabel="Removing…"
+        tone="danger"
+        onConfirm={handleRemoveGuestSession}
+      />
     </li>
   )
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   appendSessions,
+  deleteConfirmationText,
   formatSessionTitle,
   initialViewLanguage,
   removeSessionFromList,
@@ -117,5 +118,34 @@ describe('initialViewLanguage', () => {
   it('falls back to the default language when nothing was ever stored', () => {
     const session = makeSession({ role: 'owner', target_language: null })
     expect(initialViewLanguage(session)).toEqual({ language: 'es', needsTranslation: false })
+  })
+})
+
+describe('deleteConfirmationText', () => {
+  const titled = (overrides: Partial<SessionSummary> = {}) =>
+    makeSession({ title: 'Weekly standup', message_count: 7, ...overrides })
+
+  it('names the session and how many messages go with it', () => {
+    expect(deleteConfirmationText(titled())).toBe(
+      '"Weekly standup" and its 7 messages will be deleted for good. This can\'t be undone.',
+    )
+  })
+
+  it('uses the singular for one message', () => {
+    expect(deleteConfirmationText(titled({ message_count: 1 }))).toBe(
+      '"Weekly standup" and its 1 message will be deleted for good. This can\'t be undone.',
+    )
+  })
+
+  it('leaves out the messages part for an empty session', () => {
+    expect(deleteConfirmationText(titled({ message_count: 0 }))).toBe(
+      '"Weekly standup" will be deleted for good. This can\'t be undone.',
+    )
+  })
+
+  it('falls back to the dated placeholder for an untitled session', () => {
+    expect(deleteConfirmationText(titled({ title: null, message_count: 0 }))).toMatch(
+      /^"Untitled - .+" will be deleted for good/,
+    )
   })
 })
