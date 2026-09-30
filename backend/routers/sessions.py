@@ -60,8 +60,10 @@ async def list_sessions(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> SessionListResponse:
     limit = min(limit, MAX_LIST_LIMIT)
-    rows, has_more = await supabase.list_sessions(current_user, limit=limit, offset=offset)
-    return SessionListResponse(items=[SessionSummary(**row) for row in rows], has_more=has_more)
+    rows, has_more, total = await supabase.list_sessions(current_user, limit=limit, offset=offset)
+    return SessionListResponse(
+        items=[SessionSummary(**row) for row in rows], has_more=has_more, total=total
+    )
 
 
 @router.get("/sessions/{session_id}", response_model=SessionDetail)

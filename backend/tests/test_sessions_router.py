@@ -87,7 +87,7 @@ def test_list_sessions_returns_the_expected_shape(monkeypatch, authed):
 
     async def fake_list_sessions(user, limit, offset):
         assert user is authed
-        return [row], True
+        return [row], True, 67
 
     monkeypatch.setattr("routers.sessions.supabase.list_sessions", fake_list_sessions)
 
@@ -96,6 +96,7 @@ def test_list_sessions_returns_the_expected_shape(monkeypatch, authed):
     assert response.status_code == 200
     body = response.json()
     assert body["has_more"] is True
+    assert body["total"] == 67
     assert body["items"][0]["id"] == row["id"]
     assert body["items"][0]["message_count"] == 2
 
@@ -106,7 +107,7 @@ def test_list_sessions_passes_limit_and_offset_through(monkeypatch, authed):
     async def fake_list_sessions(user, limit, offset):
         captured["limit"] = limit
         captured["offset"] = offset
-        return [], False
+        return [], False, 0
 
     monkeypatch.setattr("routers.sessions.supabase.list_sessions", fake_list_sessions)
 
@@ -121,7 +122,7 @@ def test_list_sessions_clamps_limit_to_100(monkeypatch, authed):
 
     async def fake_list_sessions(user, limit, offset):
         captured["limit"] = limit
-        return [], False
+        return [], False, 0
 
     monkeypatch.setattr("routers.sessions.supabase.list_sessions", fake_list_sessions)
 
