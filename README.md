@@ -72,6 +72,7 @@ at its own read-only URL, from the sessions list on the home page.
 | Translation | DeepL API (Free tier) | 500k chars/month free, low latency |
 | Auth | Supabase Auth (email + password) | No custom auth endpoints to build or secure |
 | Routing | React Router | `/login` + per-session URLs, survives a reload |
+| Styling | Tailwind CSS | Design tokens (colors, type scale) instead of hand-rolled CSS per component |
 | TTS | ElevenLabs | Optional, on-demand playback |
 | Persistence | Supabase (PostgreSQL) | Free tier, hosted, Row Level Security scopes data per user |
 
@@ -82,9 +83,10 @@ Everything runs on `localhost`. No deployment in v1.
 - [x] **Phase 0 — Setup**: repo structure, WebSocket echo, Supabase tables
 - [x] **Phase 1 — Audio streaming**: mic → realtime STT → text on screen, persisted to Supabase
 - [x] **Phase 2 — Translation**: target language selector, DeepL, side-by-side view
-- [ ] **Phase 3 — Accounts** *(current)*: Supabase Auth (email + password), React Router (`/login` + a guarded app), sessions scoped to the signed-in user via Row Level Security
-- [ ] **Phase 4 — Session-first flow**: name and create a session explicitly (home page → "New session"), its live view joins that session over the WebSocket and can be paused/resumed without ending it, a past session's full transcript is a read-only page, re-translate it to another language on demand, rename/delete from the home list
-- [ ] **Phase 5 — TTS**: play a translated message back, generated once and cached in Supabase Storage
+- [x] **Phase 3 — Accounts**: Supabase Auth (email + password), React Router (`/login` + a guarded app), sessions scoped to the signed-in user via Row Level Security
+- [x] **Phase 4 — Session-first flow**: name and create a session explicitly (home page → "New session"), its live view joins that session over the WebSocket and can be paused/resumed without ending it, a past session's full transcript is a read-only page, re-translate it to another language on demand, rename/delete from the home list
+- [x] **Phase 4.5 — Visual design**: Tailwind CSS with a small design-token system (colors, type scale), every page/component migrated off hand-written CSS, a redesigned paired-card transcript view
+- [ ] **Phase 5 — TTS** *(current)*: play a translated message back, generated once and cached in Supabase Storage
 - [ ] **Phase 6 — Spike**: speaker labels, only if a real multi-mic use case shows up; further voice-activity-detection tuning
 
 ## Running locally
