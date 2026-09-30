@@ -1,10 +1,11 @@
 import { Link, useParams } from 'react-router-dom'
 import { AddToMySessions } from '../components/AddToMySessions'
+import { LanguageBadge } from '../components/TranscriptRow'
 import { PlayButton } from '../components/PlayButton'
-import { TranscriptRow } from '../components/TranscriptRow'
 import { useAudioPlayer } from '../hooks/useAudioPlayer'
 import { useLiveViewer } from '../hooks/useLiveViewer'
 import { SUPPORTED_LANGUAGES } from '../lib/languageControls'
+import { buildLiveTranscriptText, liveTranscriptFilename } from '../lib/liveTranscript'
 
 // Anonymous, read-only counterpart to LiveSessionPage (KAN-50) - reached by
 // a QR code/share link, no Supabase session involved at all (see App.tsx:
@@ -26,7 +27,6 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
   const {
     joinStatus,
     title,
-    sourceLanguage,
     state,
     lines,
     targetLanguage,
@@ -39,6 +39,17 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
   // One shared player, not one per line (PlayButton) - starting line B's
   // playback must stop line A's, not play both at once.
   const { playingUrl, play, stop } = useAudioPlayer()
+  const transcriptText = buildLiveTranscriptText(lines)
+
+  const handleDownload = () => {
+    const blob = new Blob([transcriptText], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = liveTranscriptFilename(title, targetLanguage)
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   if (joinStatus === 'not_found') {
     return (
@@ -72,33 +83,38 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
         </div>
       )}
 
-      <label className="my-4 flex w-fit flex-col gap-1 text-sm text-ink-900">
-        Your language
-        <select
-          value={targetLanguage}
-          disabled={joinStatus !== 'joined'}
-          onChange={(event) => setTargetLanguage(event.target.value)}
-          className="rounded border border-ink-200 px-2 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+      <div className="my-4 flex flex-wrap items-end gap-4">
+        <label className="flex w-fit flex-col gap-1 text-sm text-ink-900">
+          Your language
+          <select
+            value={targetLanguage}
+            disabled={joinStatus !== 'joined'}
+            onChange={(event) => setTargetLanguage(event.target.value)}
+            className="rounded border border-ink-200 px-2 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {SUPPORTED_LANGUAGES.map((code) => (
+              <option key={code} value={code}>
+                {code}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          onClick={handleDownload}
+          disabled={!transcriptText}
+          className="rounded border border-ink-200 px-3 py-1.5 text-sm font-medium text-ink-900 hover:border-ink-300 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {SUPPORTED_LANGUAGES.map((code) => (
-            <option key={code} value={code}>
-              {code}
-            </option>
-          ))}
-        </select>
-      </label>
+          Download translation
+        </button>
+      </div>
 
       <div className="my-4 flex flex-col gap-3">
         {lines.map((line) => (
-          <div key={line.index} className="flex flex-col gap-1.5">
-            <TranscriptRow
-              row={{
-                original_text: line.original_text,
-                translated_text: line.translated_text,
-                target_language: targetLanguage,
-              }}
-              sourceLanguage={sourceLanguage}
-            />
+          <div key={line.index} className="flex flex-col gap-1.5 rounded-lg border border-ink-200 p-3">
+            <LanguageBadge>{targetLanguage}</LanguageBadge>
+            <p className={`text-sm ${line.translated_text ? 'text-ink-900' : 'italic text-ink-500'}`}>
+              {line.translated_text ?? 'Translating…'}
+            </p>
             {line.translated_text && (
               <PlayButton
                 index={line.index}

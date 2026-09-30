@@ -4,7 +4,7 @@ import { describeTranslation, isTranslationPending, type TranslatedRow } from '.
 // (REST MessageRecord rows, KAN-26) - both satisfy TranslatedRow structurally.
 type TranscriptRowData = TranslatedRow & { original_text: string }
 
-function LanguageBadge({ children }: { children: string }) {
+export function LanguageBadge({ children }: { children: string }) {
   return (
     <span className="inline-block rounded bg-accent-50 px-1.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-accent-700">
       {children}
