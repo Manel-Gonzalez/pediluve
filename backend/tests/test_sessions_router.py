@@ -254,6 +254,40 @@ def test_delete_session_with_a_non_uuid_id_is_404(authed):
     assert response.status_code == 404
 
 
+def test_delete_session_also_deletes_its_cached_audio(monkeypatch, authed):
+    calls = []
+
+    async def fake_delete_session_audio(user, owner_id, session_id):
+        calls.append((owner_id, session_id))
+
+    async def fake_delete_session(user, session_id):
+        return True
+
+    monkeypatch.setattr("routers.sessions.storage.delete_session_audio", fake_delete_session_audio)
+    monkeypatch.setattr("routers.sessions.supabase.delete_session", fake_delete_session)
+
+    session_id = str(uuid.uuid4())
+    response = client.delete(f"/api/sessions/{session_id}")
+
+    assert response.status_code == 204
+    assert calls == [(USER.id, session_id)]
+
+
+def test_delete_session_succeeds_even_if_audio_cleanup_fails(monkeypatch, authed):
+    async def failing_delete_session_audio(user, owner_id, session_id):
+        raise RuntimeError("Storage is down")
+
+    async def fake_delete_session(user, session_id):
+        return True
+
+    monkeypatch.setattr("routers.sessions.storage.delete_session_audio", failing_delete_session_audio)
+    monkeypatch.setattr("routers.sessions.supabase.delete_session", fake_delete_session)
+
+    response = client.delete(f"/api/sessions/{uuid.uuid4()}")
+
+    assert response.status_code == 204
+
+
 # ── POST /api/sessions/{id}/translate ────────────────────────────────────
 
 

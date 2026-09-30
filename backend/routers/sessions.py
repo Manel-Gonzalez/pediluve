@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,8 +14,10 @@ from models.sessions import (
     TranslateResponse,
 )
 from routers.me import get_current_user
-from services import deepl, supabase
+from services import deepl, storage, supabase
 from services.auth import AuthenticatedUser
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
@@ -90,6 +93,17 @@ async def delete_session(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> None:
     _validate_uuid(session_id)
+    # Before the DB delete, not after: message_audio's own rows disappear
+    # via the FK cascade regardless, but Storage objects aren't part of that
+    # cascade - doing this first means a failure here leaves the session
+    # (and the cached audio) intact for a retry, rather than an
+    # unrecoverable orphan with no DB row left pointing at it. Best-effort:
+    # a Storage hiccup must not block deleting the session itself.
+    try:
+        await storage.delete_session_audio(current_user, current_user.id, session_id)
+    except Exception:
+        logger.exception("Could not delete cached audio for session %s", session_id)
+
     deleted = await supabase.delete_session(current_user, session_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Session not found")
