@@ -232,5 +232,10 @@ KAN-65 — live latency, on `feature/KAN-65`, not yet merged: ElevenLabs' VAD co
 audio requests wait for the pending `message_id`), and a `live_speaking` flag on `/ws/view` that
 shows a "speaking" bubble on the viewer page. See `docs/decisions.md`'s KAN-65 entry.
 
-Next: verify KAN-65 on real devices and merge it. Phase 6 stays parked - start with its spike (see
+KAN-66 — public demo through a temporary Cloudflare tunnel, on `chore/KAN-66` (branched from
+`feature/KAN-65`), not yet merged: the frontend only talks to its own origin and the Vite dev
+server proxies `/api` and `/ws` to uvicorn, so one tunnel to `:5173` is enough. Not a deployment -
+see `docs/decisions.md`'s KAN-66 entry and README's "Public demo" section.
+
+Next: verify KAN-65 and KAN-66 on real devices, then merge KAN-65 followed by KAN-66. Phase 6 stays parked - start with its spike (see
 Phase gates) only if a real multi-mic use case shows up.

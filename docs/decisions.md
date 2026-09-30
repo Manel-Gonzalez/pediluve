@@ -477,6 +477,30 @@ Real-device testing showed a line appearing about 2 s after the speaker stopped.
   translating every partial would multiply DeepL calls. The flag goes through the room's line
   queue, not straight to viewers, so "stopped speaking" can never overtake its own line.
 
+## Public demo: one tunnel, same-origin frontend (KAN-66)
+
+**Context:** showing the app to someone outside the LAN for a few minutes (a recruiter on their own
+phone), a few days before an interview. `CLAUDE.md` says local only, and a real deployment (Render/
+Fly/Vercel, or InstaCloud, which was looked at) would mean Docker or a hosted backend, a second place
+for secrets, and open sign-up exposed to paid APIs. It also wasn't worth that risk days before a demo.
+
+**Decision:** a Cloudflare Quick Tunnel (`cloudflared tunnel --url http://localhost:5173`) while the
+demo runs. Nothing is deployed; the URL dies with the command. To need one tunnel instead of two:
+
+- **The browser only talks to its own origin.** `lib/api.ts` used to call uvicorn at
+  `<page host>:8000`, so every way of reaching the app needed that port open and listed in
+  `CORS_ORIGINS`. Now the Vite dev server proxies `/api` and `/ws` to uvicorn, and uvicorn only has
+  to listen on `localhost`. `VITE_API_URL`/`VITE_WS_URL` still override for a backend outside that
+  proxy.
+- **Vite allows `*.trycloudflare.com`** (Vite rejects unknown `Host` headers by default).
+- **The QR uses the page's own origin unless it's `localhost`.** Over the tunnel's https the mic
+  works, so the owner can record from the tunnel URL and the QR carries it.
+  `VITE_SHARE_BASE_URL` now only fills the one gap it was for: an owner on `localhost` sharing
+  with the LAN.
+
+**Risk accepted:** while the tunnel is up, the app is public. Mitigations are operational, not code:
+turn off Supabase sign-ups for the demo and stop the tunnel afterwards (README).
+
 ## Future: persisting partial transcripts + manual edit (parked, Phase 6+)
 
 **Context:** Manel's idea, while verifying Phase 4 by hand: if you pause right as you're mid-sentence,
