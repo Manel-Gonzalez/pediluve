@@ -40,9 +40,39 @@ async def create_session(
             )
             .execute()
         )
-        return result.data[0]
+        row = result.data[0]
+        row["role"] = "owner"
+        row["guest_language"] = None
+        return row
     finally:
         await client.postgrest.aclose()
+
+
+async def _attach_role_and_guest_language(client: AsyncClient, user: AuthenticatedUser, rows: list[dict]) -> None:
+    # Mutates rows in place. A session visible under RLS is either owned
+    # (sessions.user_id = auth.uid()) or guest-visible (a session_guests row
+    # for this user, KAN-59) - never both, so which query matched tells us
+    # which role applies. A separate query rather than a PostgREST embed,
+    # same reasoning as list_sessions' own message-count query below: two
+    # simple queries beat one uncertain one.
+    if not rows:
+        return
+    ids = [row["id"] for row in rows]
+    guests_result = (
+        await client.table("session_guests")
+        .select("session_id, target_language")
+        .eq("user_id", user.id)
+        .in_("session_id", ids)
+        .execute()
+    )
+    guest_languages = {row["session_id"]: row["target_language"] for row in guests_result.data}
+    for row in rows:
+        if row["id"] in guest_languages:
+            row["role"] = "guest"
+            row["guest_language"] = guest_languages[row["id"]]
+        else:
+            row["role"] = "owner"
+            row["guest_language"] = None
 
 
 async def save_message(
@@ -170,6 +200,7 @@ async def list_sessions(
                 counts[message["session_id"]] = counts.get(message["session_id"], 0) + 1
             for row in rows:
                 row["message_count"] = counts.get(row["id"], 0)
+            await _attach_role_and_guest_language(client, user, rows)
 
         return rows, has_more
     finally:
@@ -183,6 +214,7 @@ async def get_session_with_messages(user: AuthenticatedUser, session_id: str) ->
         if not session_result.data:
             return None
         row = session_result.data[0]
+        await _attach_role_and_guest_language(client, user, [row])
 
         messages_result = (
             await client.table("messages")
@@ -197,11 +229,66 @@ async def get_session_with_messages(user: AuthenticatedUser, session_id: str) ->
         await client.postgrest.aclose()
 
 
+async def get_session_by_share_token(user: AuthenticatedUser, share_token: str) -> dict | None:
+    # Used right after add_session_guest (KAN-60) to return the
+    # newly-accessible session's summary - RLS only makes the row visible
+    # once the guest row actually exists, so this must run after that RPC,
+    # not before.
+    client = await client_for(user.access_token)
+    try:
+        result = await client.table("sessions").select("*").eq("share_token", share_token).execute()
+        if not result.data:
+            return None
+        row = result.data[0]
+        await _attach_role_and_guest_language(client, user, [row])
+
+        messages_result = (
+            await client.table("messages").select("session_id").eq("session_id", row["id"]).execute()
+        )
+        row["message_count"] = len(messages_result.data)
+        return row
+    finally:
+        await client.postgrest.aclose()
+
+
+async def add_session_guest(user: AuthenticatedUser, share_token: str, target_language: str | None) -> None:
+    client = await client_for(user.access_token)
+    try:
+        await client.rpc(
+            "add_session_guest", {"share_token": share_token, "target_language": target_language}
+        ).execute()
+    finally:
+        await client.postgrest.aclose()
+
+
+async def remove_session_guest(user: AuthenticatedUser, session_id: str) -> bool:
+    client = await client_for(user.access_token)
+    try:
+        result = (
+            await client.table("session_guests")
+            .delete()
+            .eq("session_id", session_id)
+            .eq("user_id", user.id)
+            .execute()
+        )
+        return bool(result.data)
+    finally:
+        await client.postgrest.aclose()
+
+
 async def rename_session(user: AuthenticatedUser, session_id: str, title: str) -> dict | None:
     client = await client_for(user.access_token)
     try:
         result = await client.table("sessions").update({"title": title}).eq("id", session_id).execute()
-        return result.data[0] if result.data else None
+        if not result.data:
+            return None
+        # Rename's own RLS policy is owner-only (003_auth_and_rls.sql) - a
+        # guest's update simply matches zero rows and falls into the branch
+        # above, so reaching here always means role="owner".
+        row = result.data[0]
+        row["role"] = "owner"
+        row["guest_language"] = None
+        return row
     finally:
         await client.postgrest.aclose()
 

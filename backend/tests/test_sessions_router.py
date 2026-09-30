@@ -29,6 +29,9 @@ def _session_row(**overrides):
         "target_language": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "ended_at": None,
+        "role": "owner",
+        "share_token": str(uuid.uuid4()),
+        "guest_language": None,
     }
     row.update(overrides)
     return row

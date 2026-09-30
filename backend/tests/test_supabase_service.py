@@ -110,14 +110,29 @@ class FakePostgrest:
         self.closed = True
 
 
+class FakeRpcCall:
+    def __init__(self, calls, name, params):
+        self._calls = calls
+        self.name = name
+        self.params = params
+
+    async def execute(self):
+        self._calls.append((self.name, self.params))
+        return FakeResult(None)
+
+
 class FakeAsyncClientForToken:
     def __init__(self, store, access_token):
         self.store = store
         self.access_token = access_token
         self.postgrest = FakePostgrest()
+        self.rpc_calls: list[tuple[str, dict]] = []
 
     def table(self, name):
         return FakeQuery(name, self.store)
+
+    def rpc(self, name, params):
+        return FakeRpcCall(self.rpc_calls, name, params)
 
 
 def user(access_token="tok-a", id="user-1", email="a@example.com"):
@@ -389,6 +404,26 @@ async def test_list_sessions_with_no_sessions_returns_an_empty_list(fake_client)
     assert has_more is False
 
 
+async def test_list_sessions_marks_owned_sessions_with_role_owner(fake_client):
+    await supabase.create_session(user(), title="Mine")
+    rows, _has_more = await supabase.list_sessions(user(), limit=20, offset=0)
+    assert rows[0]["role"] == "owner"
+    assert rows[0]["guest_language"] is None
+
+
+async def test_list_sessions_marks_guest_sessions_with_role_and_language(fake_client):
+    session = await supabase.create_session(user(access_token="tok-owner", id="owner-1"), title="Theirs")
+    fake_client.store.setdefault("session_guests", []).append(
+        {"session_id": session["id"], "user_id": "user-1", "target_language": "fr"}
+    )
+    # RLS would be what actually makes this row visible to the guest in
+    # production; the fake store has no RLS, so this test only exercises
+    # the role/guest_language annotation, not visibility itself.
+    rows, _has_more = await supabase.list_sessions(user(access_token="tok-a", id="user-1"), limit=20, offset=0)
+    assert rows[0]["role"] == "guest"
+    assert rows[0]["guest_language"] == "fr"
+
+
 async def test_get_session_with_messages_returns_messages_sorted_by_sequence(fake_client):
     session = await supabase.create_session(user(), title="Standup")
     await supabase.save_message(user(), session["id"], 1, "second")
@@ -402,6 +437,49 @@ async def test_get_session_with_messages_returns_messages_sorted_by_sequence(fak
 
 async def test_get_session_with_messages_returns_none_for_an_unknown_id(fake_client):
     assert await supabase.get_session_with_messages(user(), "does-not-exist") is None
+
+
+async def test_get_session_by_share_token_returns_the_matching_session(fake_client):
+    # The fake insert doesn't simulate the real `default gen_random_uuid()`
+    # on sessions.share_token, so it's set directly here.
+    session = await supabase.create_session(user(), title="Standup")
+    fake_client.store["sessions"][0]["share_token"] = "share-token-abc"
+
+    row = await supabase.get_session_by_share_token(user(), "share-token-abc")
+
+    assert row["id"] == session["id"]
+    assert row["message_count"] == 0
+    assert row["role"] == "owner"
+
+
+async def test_get_session_by_share_token_returns_none_for_an_unknown_token(fake_client):
+    assert await supabase.get_session_by_share_token(user(), "does-not-exist") is None
+
+
+async def test_add_session_guest_calls_the_rpc_with_the_token_and_language(fake_client):
+    await supabase.add_session_guest(user(), "share-token-123", "fr")
+
+    client = fake_client.by_token["tok-a"]
+    assert client.rpc_calls == [
+        ("add_session_guest", {"share_token": "share-token-123", "target_language": "fr"})
+    ]
+    assert client.postgrest.closed is True
+
+
+async def test_remove_session_guest_deletes_the_matching_row(fake_client):
+    fake_client.store.setdefault("session_guests", []).append(
+        {"session_id": "session-1", "user_id": "user-1", "target_language": "fr"}
+    )
+
+    removed = await supabase.remove_session_guest(user(access_token="tok-a", id="user-1"), "session-1")
+
+    assert removed is True
+    assert fake_client.store["session_guests"] == []
+
+
+async def test_remove_session_guest_with_no_matching_row_returns_false(fake_client):
+    removed = await supabase.remove_session_guest(user(), "does-not-exist")
+    assert removed is False
 
 
 async def test_rename_session_updates_the_title_and_returns_the_row(fake_client):
