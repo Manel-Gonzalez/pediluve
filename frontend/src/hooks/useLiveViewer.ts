@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { getViewerWebSocketUrl } from '../lib/api'
 import { DEFAULT_TARGET_LANGUAGE } from '../lib/languageControls'
 import type { LiveLineData, LiveState, ViewerServerMessage } from '../lib/types'
+import type { ViewerJoinStatus } from '../lib/viewerState'
 
-export type ViewerJoinStatus = 'joining' | 'joined' | 'not_found'
+export type { ViewerJoinStatus }
 
 // Matches backend/routers/viewer_ws.py's LIVE_NOT_AVAILABLE_CLOSE_CODE.
 const LIVE_NOT_AVAILABLE_CLOSE_CODE = 4404
@@ -20,6 +21,8 @@ export function useLiveViewer(shareToken: string) {
   const [sourceLanguage, setSourceLanguage] = useState<string | null>(null)
   const [state, setState] = useState<LiveState | null>(null)
   const [speaking, setSpeaking] = useState(false)
+  // Ever seen 'recording' - tells "not started yet" from "paused" (KAN-80).
+  const [seenRecording, setSeenRecording] = useState(false)
   const [lines, setLines] = useState<LiveLineData[]>([])
   const [targetLanguage, setTargetLanguageState] = useState(DEFAULT_TARGET_LANGUAGE)
   // Keyed by room-local line index - a signed URL is only ever valid for
@@ -66,6 +69,7 @@ export function useLiveViewer(shareToken: string) {
         setTitle(data.title)
         setSourceLanguage(data.source_language)
         setState(data.state)
+        if (data.state === 'recording') setSeenRecording(true)
         setSpeaking(data.speaking)
         setLines(data.lines)
         setJoinStatus('joined')
@@ -82,6 +86,7 @@ export function useLiveViewer(shareToken: string) {
       }
       if (data.type === 'live_status') {
         setState(data.state)
+        if (data.state === 'recording') setSeenRecording(true)
         if (data.state !== 'recording') setSpeaking(false)
         return
       }
@@ -154,6 +159,7 @@ export function useLiveViewer(shareToken: string) {
     sourceLanguage,
     state,
     speaking,
+    seenRecording,
     lines,
     targetLanguage,
     setTargetLanguage,

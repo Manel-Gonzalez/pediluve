@@ -26,6 +26,8 @@ export function useLiveListen({ lines, audioUrls, audioErrors, requestAudio, pla
   // Guards against playing the same line twice when audioUrls changes
   // again (another line's audio arriving) while this one is playing.
   const startedRef = useRef(false)
+  // Set by finishAndStop: switch off once the line playing now is done.
+  const stopAfterCurrentRef = useRef(false)
 
   useEffect(() => {
     if (!listening) return
@@ -41,6 +43,11 @@ export function useLiveListen({ lines, audioUrls, audioErrors, requestAudio, pla
   }, [listening, lines, requestAudio])
 
   useEffect(() => {
+    if (listening && currentIndex === null && stopAfterCurrentRef.current) {
+      stopAfterCurrentRef.current = false
+      setListening(false)
+      return
+    }
     if (!listening || currentIndex !== null || queue.length === 0) return
     const [next, ...rest] = queue
     setQueue(rest)
@@ -64,6 +71,7 @@ export function useLiveListen({ lines, audioUrls, audioErrors, requestAudio, pla
   // play() - none of them in a gesture - work on iOS.
   const start = useCallback(() => {
     unlock()
+    stopAfterCurrentRef.current = false
     lastQueuedRef.current = lines.reduce((max, line) => Math.max(max, line.index), -1)
     setQueue([])
     setCurrentIndex(null)
@@ -85,5 +93,18 @@ export function useLiveListen({ lines, audioUrls, audioErrors, requestAudio, pla
     stop()
   }, [stop])
 
-  return { listening, currentIndex, start, stopListening, resetQueue }
+  // The session ended (KAN-80): no new lines will come, and audio not
+  // fetched yet never will - let the line playing now finish, then stop.
+  // Nothing playing yet (still waiting on audio) means stop right away.
+  const finishAndStop = useCallback(() => {
+    setQueue([])
+    if (currentIndex !== null && startedRef.current) {
+      stopAfterCurrentRef.current = true
+      return
+    }
+    setCurrentIndex(null)
+    setListening(false)
+  }, [currentIndex])
+
+  return { listening, currentIndex, start, stopListening, resetQueue, finishAndStop }
 }
