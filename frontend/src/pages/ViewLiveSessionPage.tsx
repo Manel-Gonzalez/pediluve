@@ -1,4 +1,5 @@
 import { Link, useParams } from 'react-router-dom'
+import { AddToMySessions } from '../components/AddToMySessions'
 import { PlayButton } from '../components/PlayButton'
 import { TranscriptRow } from '../components/TranscriptRow'
 import { useLiveViewer } from '../hooks/useLiveViewer'
@@ -60,6 +61,12 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
           </span>
         )}
       </p>
+
+      {joinStatus === 'joined' && (
+        <div className="my-4">
+          <AddToMySessions shareToken={shareToken} targetLanguage={targetLanguage} />
+        </div>
+      )}
 
       <label className="my-4 flex w-fit flex-col gap-1 text-sm text-ink-900">
         Your language

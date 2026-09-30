@@ -155,3 +155,21 @@ export function translateSession(
     body: JSON.stringify({ target_language: targetLanguage }),
   })
 }
+
+// "Add to my sessions" (KAN-62): a signed-in guest adds a live/past session
+// to their own account via its share link, without ever seeing its
+// share_token beyond what the URL already gave them.
+export function addGuestSession(
+  session: Session,
+  shareToken: string,
+  targetLanguage: string | null,
+): Promise<SessionSummary> {
+  return apiFetch('/api/shared/guest', session, {
+    method: 'POST',
+    body: JSON.stringify({ share_token: shareToken, target_language: targetLanguage }),
+  })
+}
+
+export function removeGuestSession(session: Session, id: string): Promise<void> {
+  return apiFetch(`/api/sessions/${id}/guest`, session, { method: 'DELETE' })
+}

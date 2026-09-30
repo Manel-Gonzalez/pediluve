@@ -16,6 +16,9 @@ function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
     target_language: null,
     title: null,
     message_count: 0,
+    role: 'owner',
+    share_token: 'share-token-1',
+    guest_language: null,
     ...overrides,
   }
 }

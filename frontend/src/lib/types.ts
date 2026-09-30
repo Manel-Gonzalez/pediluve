@@ -93,6 +93,8 @@ export type ServerMessage =
 // throughout useAuth/useWebSocket - this "session" is a recording/transcript
 // session, the thing the home page lists.
 
+export type SessionRole = 'owner' | 'guest'
+
 export type SessionSummary = {
   id: string
   created_at: string
@@ -101,6 +103,12 @@ export type SessionSummary = {
   target_language: string | null
   title: string | null
   message_count: number
+  // "owner" for the account that created it, "guest" for one that added it
+  // via a share link (KAN-59/KAN-60/KAN-62) - a guest can read but never
+  // rename/delete/change the target language.
+  role: SessionRole
+  share_token: string
+  guest_language: string | null
 }
 
 export type SessionListResponse = {
