@@ -106,8 +106,14 @@ cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp ../.env.example .env   # fill in your keys (ElevenLabs, DeepL, Supabase URL + anon key)
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+`--host 0.0.0.0` (not just `localhost`) so a phone on the same Wi-Fi can reach the backend too -
+needed for the QR live viewer (KAN-50): the mic-capturing owner needs a secure context, so keep
+recording on `http://localhost:5173`, but the anonymous viewer opens the share link at your
+machine's LAN IP instead. Add that LAN origin (e.g. `http://192.168.1.42:5173`) to `CORS_ORIGINS`
+in `backend/.env` alongside `http://localhost:5173`.
 
 ### Frontend
 

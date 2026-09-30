@@ -6,16 +6,46 @@ import type {
   TranslateResponse,
 } from './types'
 
-export function getWebSocketUrl(): string {
-  return import.meta.env.VITE_WS_URL ?? 'ws://localhost:8000/ws'
+// Backend's dev port (uvicorn). Not configurable separately from
+// VITE_WS_URL/VITE_API_URL - set one of those instead if it ever needs to
+// differ from the frontend's own host.
+const BACKEND_PORT = '8000'
+
+type LocationLike = { hostname: string; protocol: string }
+
+// A guest opening the QR/share link on their own phone loads the frontend
+// from this machine's LAN IP, not "localhost" - "localhost" on their phone
+// means their phone. Deriving the backend host from the page's own location
+// (falling back to it) means the same build works for both the owner
+// (https://localhost:5173) and a LAN guest (http://192.168.x.x:5173)
+// without an env var per device. VITE_WS_URL/VITE_API_URL still win when
+// set, for anything this heuristic can't handle (a reverse proxy, a
+// different backend host entirely).
+//
+// `location` is injectable (rather than always reading `window.location`
+// directly) so getApiUrl/getWebSocketUrl stay plain, unit-testable
+// functions - no jsdom needed, matching this project's "don't force tests
+// onto browser APIs" convention (see CLAUDE.md).
+function currentLocation(): LocationLike | undefined {
+  return typeof window !== 'undefined' ? window.location : undefined
+}
+
+export function getWebSocketUrl(location: LocationLike | undefined = currentLocation()): string {
+  if (import.meta.env.VITE_WS_URL) return import.meta.env.VITE_WS_URL
+  const protocol = location?.protocol === 'https:' ? 'wss' : 'ws'
+  const host = location?.hostname || 'localhost'
+  return `${protocol}://${host}:${BACKEND_PORT}/ws`
 }
 
 export function getChunkDurationMs(): number {
   return Number(import.meta.env.VITE_CHUNK_DURATION_MS) || 250
 }
 
-export function getApiUrl(): string {
-  return import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+export function getApiUrl(location: LocationLike | undefined = currentLocation()): string {
+  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL
+  const protocol = location?.protocol === 'https:' ? 'https' : 'http'
+  const host = location?.hostname || 'localhost'
+  return `${protocol}://${host}:${BACKEND_PORT}`
 }
 
 // Carries the HTTP status alongside FastAPI's `detail` message, so callers

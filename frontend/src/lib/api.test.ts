@@ -5,9 +5,12 @@ import {
   buildSessionListQuery,
   createSession,
   deleteSession,
+  getApiUrl,
   getSession,
+  getWebSocketUrl,
   listSessions,
 } from './api'
+
 
 const SESSION = { access_token: 'tok-123' } as Session
 
@@ -122,5 +125,36 @@ describe('apiFetch (via the typed wrappers)', () => {
       status: 500,
       detail: 'Internal Server Error',
     })
+  })
+})
+
+describe('getApiUrl / getWebSocketUrl LAN host derivation', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('derives the backend host from the given location, not a hardcoded "localhost"', () => {
+    const location = { hostname: '192.168.1.42', protocol: 'http:' }
+    expect(getApiUrl(location)).toBe('http://192.168.1.42:8000')
+    expect(getWebSocketUrl(location)).toBe('ws://192.168.1.42:8000/ws')
+  })
+
+  it('uses wss/https when the page itself was loaded over https', () => {
+    const location = { hostname: 'pediluve.example', protocol: 'https:' }
+    expect(getApiUrl(location)).toBe('https://pediluve.example:8000')
+    expect(getWebSocketUrl(location)).toBe('wss://pediluve.example:8000/ws')
+  })
+
+  it('falls back to localhost when no location is available (e.g. non-browser context)', () => {
+    expect(getApiUrl(undefined)).toBe('http://localhost:8000')
+    expect(getWebSocketUrl(undefined)).toBe('ws://localhost:8000/ws')
+  })
+
+  it('VITE_API_URL / VITE_WS_URL still override the derived host when set', () => {
+    vi.stubEnv('VITE_API_URL', 'https://api.example.com')
+    vi.stubEnv('VITE_WS_URL', 'wss://api.example.com/ws')
+    const location = { hostname: '192.168.1.42', protocol: 'http:' }
+    expect(getApiUrl(location)).toBe('https://api.example.com')
+    expect(getWebSocketUrl(location)).toBe('wss://api.example.com/ws')
   })
 })
