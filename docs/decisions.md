@@ -501,6 +501,44 @@ demo runs. Nothing is deployed; the URL dies with the command. To need one tunne
 **Risk accepted:** while the tunnel is up, the app is public. Mitigations are operational, not code:
 turn off Supabase sign-ups for the demo and stop the tunnel afterwards (README).
 
+## Visual design: Phase 4.5 tokens, Phase 5.5 redesign (KAN-73)
+
+**Context:** Phase 4.5 moved every component to Tailwind with a small token scale (`accent`, `ink`),
+but components still used raw steps (`text-ink-900`, `bg-accent-500`). There was no dark mode.
+Browser `confirm()` boxes, text-only buttons and debug text ("WebSocket status: authenticated") were
+still on screen. Phase 5.5 is a second pass before showing the app to recruiters. It is a styling/UX
+pass only, apart from `total` on the session list. References: Vercel Geist, shadcn/ui theming,
+Linear, Raycast, Granola, and Apple Live Captions for the viewer.
+
+- **Semantic tokens backed by CSS variables, not `dark:` pairs.** Components use `canvas`,
+  `surface`, `subtle`, `line`, `fg`, `muted`, `primary`, `highlight` and `danger`. Each is
+  `rgb(var(--x) / <alpha-value>)`, defined once under `:root` and once under `.dark` in `index.css`.
+  One place per theme instead of a `dark:` variant on every element, and opacity modifiers still
+  work. Primary moved from accent-500 to accent-600: white on accent-500 failed WCAG AA (3.1:1).
+- **Theme: the OS setting until the user picks one.** `darkMode: 'selector'`, with an inline script
+  in `index.html` that sets the class before first paint, so there is no white flash. An explicit
+  choice is kept in localStorage (`pediluve-theme`). Without one, the page follows OS changes live.
+  The rules live in `lib/theme.ts`, which is tested, and the inline script mirrors them.
+- **Native `<dialog>` for modals.** `showModal()` provides the top layer, an inert background and
+  a focus trap. `Dialog` adds backdrop-click, initial focus and returning focus to the opener, and
+  `ConfirmDialog` is built on it. A failed action stays inside the dialog instead of failing
+  silently.
+- **`lucide-react` for icons** (approved new dependency) over hand-copied SVG paths. It is
+  tree-shaken, about 1 KB per icon. Every icon-only button goes through `IconButton`, which
+  requires a label (used for `aria-label` and the tooltip).
+- **Pagination: 10 per page, offset-based, page in the URL.** `GET /api/sessions` now also returns
+  `total` (`count="exact"`, KAN-75), for "Page 2 of 7". `?page=N` survives reloads and Back, an
+  out-of-range page is clamped, and removing the last row of the last page steps back one page. The
+  rejected alternative was keeping "Load more", which was the explicit complaint (no endless list
+  with 100 sessions).
+- **"Not started" vs "paused" on the viewer.** A live room starts `paused` until the owner first
+  records, so a paused state alone would tell a viewer who scanned early that the speaker is on a
+  break. `viewerControls()` uses `seenRecording`, or existing lines from a resumed session, to
+  choose between the two messages. The blur covers only the transcript: the language, Listen live
+  and download controls stay usable. No WebSocket contract change was needed.
+- **Every animation behind `motion-safe:`**, including the recording ping, the speaking dots, the
+  login hero's waveform and the smooth auto-scroll.
+
 ## Future: persisting partial transcripts + manual edit (parked, Phase 6+)
 
 **Context:** Manel's idea, while verifying Phase 4 by hand: if you pause right as you're mid-sentence,

@@ -11,6 +11,9 @@ This is a portfolio project. Code quality and clear structure matter more than s
 ## Stack (do not change without asking)
 
 - **Frontend:** React 18 + Vite + TypeScript. Plain CSS or Tailwind — no component libraries unless asked.
+  Icons from `lucide-react` (approved in Phase 5.5). Light/dark theme through semantic color tokens
+  (`canvas`, `surface`, `fg`, `muted`, `primary`… in `tailwind.config.ts` + `index.css`) — use those,
+  never raw `ink-*`/`accent-*` steps, in components.
 - **Backend:** Python 3.11+ + FastAPI + `websockets`. Use `uvicorn` for dev.
 - **STT:** ElevenLabs Scribe **realtime** (`scribe_v2_realtime`, `wss://api.elevenlabs.io/v1/speech-to-text/realtime`). Backend proxies: browser streams raw PCM to our own `/ws`, backend forwards it to ElevenLabs' WebSocket and relays `partial_transcript`/`committed_transcript` events back. No diarization on this endpoint — REST batch (`scribe_v2`) is the fallback if we ever need speaker separation.
 - **Translation:** DeepL API Free tier.
@@ -35,15 +38,19 @@ pediluve/
 │   ├── src/
 │   │   ├── components/    ← AuthForm, Nav, RequireAuth (route guard), NewSessionModal,
 │   │   │                    TranscriptRow (shared by the live view and history), SessionListRow,
-│   │   │                    SharePanel (QR + copy link), PlayButton, AddToMySessions (guest)
+│   │   │                    SharePanel (QR + copy link), PlayButton, AddToMySessions (guest),
+│   │   │                    Button, IconButton, Dialog, ConfirmDialog, ThemeToggle, LogoMark,
+│   │   │                    StatusPill (Phase 5.5 primitives)
 │   │   ├── hooks/         ← useWebSocket (join_session/pause-resume aware), useMicrophone,
 │   │   │                    useAuth (AuthProvider), useLiveViewer (/ws/view), useAudioPlayer,
-│   │   │                    useLiveListen ("Listen live" queue)
+│   │   │                    useLiveListen ("Listen live" queue), useTheme, useStickToBottom
 │   │   ├── pages/         ← LoginPage, HomePage (sessions list + "New session"), LiveSessionPage
 │   │   │                    (/sessions/:id/live), SessionDetailPage (/sessions/:id, read-only),
 │   │   │                    ViewLiveSessionPage (/view/:shareToken, anonymous, outside RequireAuth)
 │   │   ├── lib/           ← api client (REST + ApiError), types, auth/languageControls/
-│   │   │                    recording/sessions/sessionTitle/routes/share/download/liveTranscript helpers
+│   │   │                    recording/sessions/sessionTitle/routes/share/download/liveTranscript,
+│   │   │                    theme/languageLabel/pagination/relativeTime/authForm/viewerState/
+│   │   │                    liveStatus/autoScroll helpers
 │   │   ├── audio/         ← pcm-worklet.js (AudioWorkletProcessor)
 │   │   ├── App.tsx        ← route table only (RequireAuth + pages/)
 │   │   └── main.tsx       ← AuthProvider + BrowserRouter wiring
@@ -134,6 +141,12 @@ QR code live viewer" entry, D1–D6, for the full architecture behind both):
   line → ElevenLabs TTS → audio generated once and cached in Supabase Storage, keyed by `(message,
   language)` so a viewer picking their own language never re-triggers a paid call for one already
   cached — one fixed voice for v1, not one per language.
+
+**Phase 5.5:** second visual pass (KAN-73; see `docs/decisions.md`'s "Visual design" entry). Semantic
+light/dark tokens with an OS-following toggle, redesigned login (password confirmation on register),
+in-app confirm dialogs instead of `window.confirm`, icon actions, sessions paginated 10 per page, a
+re-laid-out owner live page, and a mobile-first viewer (paused/not-started blur, session-ended
+notice, auto-scroll). Styling/UX only, plus `total` on `GET /api/sessions`.
 
 **Phase 6 (parked, exploratory only):** speaker labels if multiple audio inputs. No multi-channel
 capture exists yet and there's no confirmed use case for it — start with a spike (is there a real
@@ -237,5 +250,17 @@ KAN-66 — public demo through a temporary Cloudflare tunnel, on `chore/KAN-66` 
 server proxies `/api` and `/ws` to uvicorn, so one tunnel to `:5173` is enough. Not a deployment -
 see `docs/decisions.md`'s KAN-66 entry and README's "Public demo" section.
 
-Next: verify KAN-65 and KAN-66 on real devices, then merge KAN-65 followed by KAN-66. Phase 6 stays parked - start with its spike (see
-Phase gates) only if a real multi-mic use case shows up.
+Phase 5.5 — visual redesign, on `feature/KAN-73` (branched from `docs/KAN-72`, so it carries
+KAN-65, KAN-66 and KAN-72 too), not yet merged: KAN-74 (light/dark tokens, theme toggle, favicon),
+KAN-76 (lucide icons, Button/IconButton, language names), KAN-77 (Dialog/ConfirmDialog, no more
+`window.confirm`), KAN-75 (`total` on `GET /api/sessions`), KAN-78 (HomePage, 10 per page, relative
+dates), KAN-79 (login redesign + password confirmation), KAN-80 (viewer paused/not-started overlay,
+ended notice, clean final state), KAN-81 (owner live page + detail page, status pill, End session
+confirm), KAN-82 (viewer auto-scroll + "new lines" chip). KAN-68/69/70 superseded; KAN-71 stays
+parked under KAN-67. Checked in Chromium (both themes, desktop and phone width) against mocked
+auth/API/WebSockets; not yet on real devices. Backend tests (`pytest`, 271) and frontend tests
+(`vitest`, 138) passing.
+
+Next: verify KAN-65, KAN-66 and KAN-73 on real devices, then merge in order (KAN-65 → KAN-66 →
+KAN-72 → KAN-73). Phase 6 stays parked - start with its spike (see Phase gates) only if a real
+multi-mic use case shows up.
