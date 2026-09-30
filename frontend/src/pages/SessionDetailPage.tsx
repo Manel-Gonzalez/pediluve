@@ -132,7 +132,7 @@ function SessionDetailPageContent({ session, sessionId }: { session: Session; se
     return (
       <div className="mx-auto max-w-2xl px-4 py-8">
         <p>Session not found.</p>
-        <Link to="/" className="text-accent-500 hover:text-accent-600">
+        <Link to="/" className="text-primary hover:text-primary-hover">
           Back to sessions
         </Link>
       </div>
@@ -142,7 +142,7 @@ function SessionDetailPageContent({ session, sessionId }: { session: Session; se
   if (loading) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-8">
-        <p className="text-ink-500">Loading…</p>
+        <p className="text-muted">Loading…</p>
       </div>
     )
   }
@@ -150,8 +150,8 @@ function SessionDetailPageContent({ session, sessionId }: { session: Session; se
   if (error || !detail) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-8">
-        <p className="text-red-600">{error ?? 'Could not load session'}</p>
-        <Link to="/" className="text-accent-500 hover:text-accent-600">
+        <p className="text-danger">{error ?? 'Could not load session'}</p>
+        <Link to="/" className="text-primary hover:text-primary-hover">
           Back to sessions
         </Link>
       </div>
@@ -160,22 +160,22 @@ function SessionDetailPageContent({ session, sessionId }: { session: Session; se
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
-      <Link to="/" className="text-sm text-accent-500 hover:text-accent-600">
+      <Link to="/" className="text-sm text-primary hover:text-primary-hover">
         Back to sessions
       </Link>
-      <h1 className="mt-2 text-2xl font-semibold text-ink-900">
+      <h1 className="mt-2 text-2xl font-semibold text-fg">
         {detail.title ?? 'Untitled session'}
       </h1>
-      <p className="mt-1 text-sm text-ink-500">{new Date(detail.created_at).toLocaleString()}</p>
+      <p className="mt-1 text-sm text-muted">{new Date(detail.created_at).toLocaleString()}</p>
 
       <div className="my-4 flex items-center gap-4">
-        <label className="flex flex-col gap-1 text-sm text-ink-900">
+        <label className="flex flex-col gap-1 text-sm text-fg">
           View in language
           <select
             value={viewLanguage}
             disabled={translating}
             onChange={(event) => handleViewLanguageChange(event.target.value)}
-            className="rounded border border-ink-200 px-2 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded border border-line px-2 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
           >
             {SUPPORTED_LANGUAGES.map((code) => (
               <option key={code} value={code}>
@@ -184,17 +184,17 @@ function SessionDetailPageContent({ session, sessionId }: { session: Session; se
             ))}
           </select>
         </label>
-        {translating && <span className="text-sm italic text-ink-500">Translating…</span>}
+        {translating && <span className="text-sm italic text-muted">Translating…</span>}
         <button
           onClick={handleDownload}
           disabled={downloading || translating || detail.messages.length === 0}
-          className="ml-auto self-end rounded border border-ink-200 px-3 py-1.5 text-sm font-medium text-ink-900 hover:border-ink-300 disabled:cursor-not-allowed disabled:opacity-50"
+          className="ml-auto self-end rounded border border-line px-3 py-1.5 text-sm font-medium text-fg hover:border-line-strong disabled:cursor-not-allowed disabled:opacity-50"
         >
           {downloading ? 'Downloading…' : 'Download transcript'}
         </button>
       </div>
-      {translateError && <p className="text-red-600">{translateError}</p>}
-      {downloadError && <p className="text-red-600">{downloadError}</p>}
+      {translateError && <p className="text-danger">{translateError}</p>}
+      {downloadError && <p className="text-danger">{downloadError}</p>}
 
       <div className="my-4 flex flex-col gap-3">
         {detail.messages.map((message) => (

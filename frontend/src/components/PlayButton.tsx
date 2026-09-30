@@ -46,7 +46,7 @@ export function PlayButton({
       onClick={handleClick}
       disabled={loading}
       title={error ?? undefined}
-      className="w-fit rounded border border-ink-200 px-2 py-1 text-xs font-medium text-ink-900 hover:border-ink-300 disabled:cursor-not-allowed disabled:opacity-50"
+      className="w-fit rounded border border-line px-2 py-1 text-xs font-medium text-fg hover:border-line-strong disabled:cursor-not-allowed disabled:opacity-50"
     >
       {label}
     </button>

@@ -78,14 +78,14 @@ function HomePageContent({ session }: { session: Session }) {
   return (
     <main className="max-w-2xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-semibold text-ink-900">Your sessions</h1>
+        <h1 className="text-2xl font-semibold text-fg">Your sessions</h1>
         <NewSessionModal session={session} />
       </div>
 
-      {loading && <p className="text-ink-500">Loading…</p>}
-      {error && <p className="text-red-600">{error}</p>}
+      {loading && <p className="text-muted">Loading…</p>}
+      {error && <p className="text-danger">{error}</p>}
       {notice && (
-        <p className="flex items-center gap-2 bg-ink-50 rounded-md px-3 py-2 text-ink-600 mb-4">
+        <p className="flex items-center gap-2 bg-subtle rounded-md px-3 py-2 text-muted mb-4">
           {notice}{' '}
           <button type="button" onClick={() => setNotice(null)}>
             Dismiss
@@ -94,7 +94,7 @@ function HomePageContent({ session }: { session: Session }) {
       )}
 
       {!loading && !error && sessions.length === 0 && (
-        <p className="text-ink-500">No sessions yet.</p>
+        <p className="text-muted">No sessions yet.</p>
       )}
 
       {sessions.length > 0 && (

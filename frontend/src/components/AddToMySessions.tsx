@@ -24,7 +24,7 @@ export function AddToMySessions({
       <Link
         to="/login"
         state={{ from: { pathname: location.pathname } }}
-        className="w-fit text-xs text-accent-500 hover:text-accent-600"
+        className="w-fit text-xs text-primary hover:text-primary-hover"
       >
         Sign in to add this session to your account
       </Link>
@@ -32,7 +32,7 @@ export function AddToMySessions({
   }
 
   if (status === 'added') {
-    return <p className="text-xs text-ink-500">Added to your sessions.</p>
+    return <p className="text-xs text-muted">Added to your sessions.</p>
   }
 
   const handleClick = async () => {
@@ -49,7 +49,7 @@ export function AddToMySessions({
     <button
       onClick={handleClick}
       disabled={status === 'saving'}
-      className="w-fit rounded border border-ink-200 px-2 py-1 text-xs font-medium text-ink-900 hover:border-ink-300 disabled:cursor-not-allowed disabled:opacity-50"
+      className="w-fit rounded border border-line px-2 py-1 text-xs font-medium text-fg hover:border-line-strong disabled:cursor-not-allowed disabled:opacity-50"
     >
       {status === 'saving' ? 'Adding…' : status === 'error' ? 'Retry' : 'Add to my sessions'}
     </button>

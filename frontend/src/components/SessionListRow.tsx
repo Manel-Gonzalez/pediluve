@@ -105,7 +105,7 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
   }
 
   return (
-    <li className="flex items-center justify-between gap-4 rounded-lg border border-ink-200 p-4 transition-shadow hover:shadow-md hover:border-accent-200">
+    <li className="flex items-center justify-between gap-4 rounded-lg border border-line p-4 transition-shadow hover:shadow-md hover:border-primary/40">
       {isEditing ? (
         <div className="flex flex-col gap-1 flex-1">
           <input
@@ -119,21 +119,21 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
             // Enter is the only way to commit, so an accidental blur can't
             // silently rename the session.
             onBlur={() => !pending && cancelEditing()}
-            className="px-2 py-1 text-base border border-ink-200 rounded-md"
+            className="px-2 py-1 text-base border border-line rounded-md"
           />
-          {error && <span className="text-sm text-red-600">{error}</span>}
+          {error && <span className="text-sm text-danger">{error}</span>}
         </div>
       ) : (
         <Link to={sessionPath(item.id)} className="flex flex-col gap-1 text-inherit no-underline">
-          <span className="flex items-center gap-2 font-semibold text-ink-900">
+          <span className="flex items-center gap-2 font-semibold text-fg">
             {formatSessionTitle(item)}
             {item.role === 'guest' && (
-              <span className="inline-block rounded bg-accent-50 px-1.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-accent-700">
+              <span className="inline-block rounded bg-highlight px-1.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-highlight-fg">
                 Guest
               </span>
             )}
           </span>
-          <span className="text-sm text-ink-500">
+          <span className="text-sm text-muted">
             {new Date(item.created_at).toLocaleString()}
             {' · '}
             {item.source_language ?? '?'} → {item.target_language ?? '?'}
@@ -147,7 +147,7 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
           <button
             type="button"
             onClick={handleRemoveGuestSession}
-            className="px-3 py-1 text-sm rounded-md border border-ink-200 text-red-600 hover:bg-red-50"
+            className="px-3 py-1 text-sm rounded-md border border-line text-danger hover:bg-danger-soft"
           >
             Remove
           </button>
@@ -157,14 +157,14 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
               type="button"
               onClick={startEditing}
               disabled={isEditing}
-              className="px-3 py-1 text-sm rounded-md border border-accent-500 text-accent-500 hover:bg-accent-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-3 py-1 text-sm rounded-md border border-primary text-primary hover:bg-highlight disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Rename
             </button>
             <button
               type="button"
               onClick={handleDelete}
-              className="px-3 py-1 text-sm rounded-md border border-ink-200 text-red-600 hover:bg-red-50"
+              className="px-3 py-1 text-sm rounded-md border border-line text-danger hover:bg-danger-soft"
             >
               Delete
             </button>

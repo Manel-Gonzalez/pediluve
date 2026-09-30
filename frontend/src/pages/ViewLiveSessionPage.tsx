@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { AddToMySessions } from '../components/AddToMySessions'
 import { LanguageBadge } from '../components/TranscriptRow'
 import { PlayButton } from '../components/PlayButton'
+import { ThemeToggle } from '../components/ThemeToggle'
 import { useAudioPlayer } from '../hooks/useAudioPlayer'
 import { useLiveListen } from '../hooks/useLiveListen'
 import { useLiveViewer } from '../hooks/useLiveViewer'
@@ -93,7 +94,7 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-8">
         <p>This live session isn't available - it may have ended, or the link may be wrong.</p>
-        <Link to="/" className="text-accent-500 hover:text-accent-600">
+        <Link to="/" className="text-primary hover:text-primary-hover">
           Go home
         </Link>
       </div>
@@ -104,13 +105,16 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
-      <h1 className="text-2xl font-semibold text-ink-900">{title ?? 'Live session'}</h1>
-      <p className="mt-1 flex items-center gap-2 text-sm text-ink-500">
+      <div className="flex items-start justify-between gap-4">
+        <h1 className="text-2xl font-semibold text-fg">{title ?? 'Live session'}</h1>
+        <ThemeToggle />
+      </div>
+      <p className="mt-1 flex items-center gap-2 text-sm text-muted">
         {describeState(state)}
         {isRecording && (
           <span className="relative flex h-3 w-3" aria-label="Recording" role="status">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent-400 opacity-75" />
-            <span className="relative inline-flex h-3 w-3 rounded-full bg-accent-500" />
+            <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-accent-400 opacity-75" />
+            <span className="relative inline-flex h-3 w-3 rounded-full bg-primary" />
           </span>
         )}
       </p>
@@ -128,19 +132,19 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
           aria-pressed={listen.listening}
           className={`rounded px-3 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
             listen.listening
-              ? 'bg-accent-500 text-white hover:bg-accent-600'
-              : 'border border-accent-500 text-accent-600 hover:bg-accent-50'
+              ? 'bg-primary text-on-primary hover:bg-primary-hover'
+              : 'border border-primary text-primary-hover hover:bg-highlight'
           }`}
         >
           {listen.listening ? 'Stop listening' : 'Listen live'}
         </button>
-        <label className="flex w-fit flex-col gap-1 text-sm text-ink-900">
+        <label className="flex w-fit flex-col gap-1 text-sm text-fg">
           Your language
           <select
             value={targetLanguage}
             disabled={joinStatus !== 'joined'}
             onChange={(event) => handleLanguageChange(event.target.value)}
-            className="rounded border border-ink-200 px-2 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded border border-line px-2 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
           >
             {SUPPORTED_LANGUAGES.map((code) => (
               <option key={code} value={code}>
@@ -152,13 +156,13 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
         <button
           onClick={handleDownload}
           disabled={!transcriptText}
-          className="rounded border border-ink-200 px-3 py-1.5 text-sm font-medium text-ink-900 hover:border-ink-300 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded border border-line px-3 py-1.5 text-sm font-medium text-fg hover:border-line-strong disabled:cursor-not-allowed disabled:opacity-50"
         >
           Download translation
         </button>
       </div>
       {listen.listening && (
-        <p className="-mt-2 mb-4 text-xs text-ink-500">
+        <p className="-mt-2 mb-4 text-xs text-muted">
           Reading each new line aloud as it arrives.
         </p>
       )}
@@ -168,11 +172,11 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
           <div
             key={line.index}
             className={`flex flex-col gap-1.5 rounded-lg border p-3 ${
-              listen.currentIndex === line.index ? 'border-accent-400 bg-accent-50' : 'border-ink-200'
+              listen.currentIndex === line.index ? 'border-primary bg-highlight' : 'border-line'
             }`}
           >
             <LanguageBadge>{targetLanguage}</LanguageBadge>
-            <p className={`text-sm ${line.translated_text ? 'text-ink-900' : 'italic text-ink-500'}`}>
+            <p className={`text-sm ${line.translated_text ? 'text-fg' : 'italic text-muted'}`}>
               {line.translated_text ?? 'Translating…'}
             </p>
             {/* Per-line Play only while "Listen live" is off - with it on,
@@ -193,9 +197,9 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
           </div>
         ))}
         {isRecording && speaking && <SpeakingBubble />}
-        {joinStatus === 'joining' && <p className="text-sm text-ink-500">Connecting…</p>}
+        {joinStatus === 'joining' && <p className="text-sm text-muted">Connecting…</p>}
         {joinStatus === 'joined' && lines.length === 0 && !speaking && (
-          <p className="text-sm text-ink-500">Nothing said yet.</p>
+          <p className="text-sm text-muted">Nothing said yet.</p>
         )}
       </div>
     </div>
@@ -210,12 +214,12 @@ function SpeakingBubble() {
     <div
       role="status"
       aria-label="The speaker is talking"
-      className="flex w-fit items-center gap-1 rounded-lg border border-ink-200 px-4 py-3"
+      className="flex w-fit items-center gap-1 rounded-lg border border-line px-4 py-3"
     >
       {[0, 150, 300].map((delay) => (
         <span
           key={delay}
-          className="h-2 w-2 animate-bounce rounded-full bg-accent-400"
+          className="h-2 w-2 motion-safe:animate-bounce rounded-full bg-accent-400"
           style={{ animationDelay: `${delay}ms` }}
         />
       ))}

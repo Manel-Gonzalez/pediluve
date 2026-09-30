@@ -36,16 +36,16 @@ export function SharePanel({ shareToken }: { shareToken: string }) {
   }
 
   return (
-    <div className="my-4 flex flex-wrap items-center gap-4 rounded-lg border border-ink-200 p-3">
+    <div className="my-4 flex flex-wrap items-center gap-4 rounded-lg border border-line p-3">
       {qrDataUrl && (
         <img src={qrDataUrl} alt="QR code to the live view of this session" width={112} height={112} />
       )}
       <div className="flex min-w-0 flex-col gap-1.5">
-        <p className="text-sm font-medium text-ink-900">Share this session</p>
-        <p className="max-w-xs truncate text-xs text-ink-500">{shareUrl}</p>
+        <p className="text-sm font-medium text-fg">Share this session</p>
+        <p className="max-w-xs truncate text-xs text-muted">{shareUrl}</p>
         <button
           onClick={handleCopy}
-          className="w-fit rounded border border-ink-200 px-2 py-1 text-xs font-medium text-ink-900 hover:border-ink-300"
+          className="w-fit rounded border border-line px-2 py-1 text-xs font-medium text-fg hover:border-line-strong"
         >
           {copied ? 'Copied!' : 'Copy link'}
         </button>
