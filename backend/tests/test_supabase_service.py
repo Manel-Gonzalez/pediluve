@@ -200,9 +200,14 @@ async def test_client_for_authenticates_the_postgrest_client_with_the_token(monk
         def auth(self, token):
             self.token = token
 
+    class FakeOptions:
+        def __init__(self):
+            self.headers = {}
+
     class FakeRealClient:
         def __init__(self):
             self.postgrest = FakeRealPostgrest()
+            self.options = FakeOptions()
 
     created = FakeRealClient()
 
@@ -225,9 +230,14 @@ async def test_client_for_returns_a_distinct_client_per_call(monkeypatch):
             pass
 
     async def fake_create_async_client(url, key):
+        class FakeOptions:
+            def __init__(self):
+                self.headers = {}
+
         class FakeRealClient:
             def __init__(self):
                 self.postgrest = FakeRealPostgrest()
+                self.options = FakeOptions()
 
         return FakeRealClient()
 
@@ -239,6 +249,20 @@ async def test_client_for_returns_a_distinct_client_per_call(monkeypatch):
     second = await supabase.client_for("token-b")
 
     assert first is not second
+
+
+async def test_client_for_authenticates_the_storage_client_with_the_token(monkeypatch):
+    # Uses the real supabase-py client (constructing it makes no network
+    # call): the storage sub-client is built lazily from options.headers,
+    # not from the postgrest client, so a fake can't catch it still
+    # carrying the anon key - which made every Storage upload run as
+    # `anon` and fail migration 007's auth.uid()-based RLS.
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_KEY", "anon-key")
+
+    client = await supabase.client_for("user-token")
+
+    assert client.storage.session.headers["Authorization"] == "Bearer user-token"
 
 
 async def create_session_id(user_obj, **kwargs):

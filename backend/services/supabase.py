@@ -13,6 +13,12 @@ async def client_for(access_token: str) -> AsyncClient:
     # anon key here - the service-role key would bypass RLS entirely.
     client = await create_async_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
     client.postgrest.auth(access_token)
+    # client.storage is created lazily from options.headers, not from the
+    # postgrest client - without this it would still carry the anon key,
+    # so every Storage call ran as `anon` and migration 007's
+    # auth.uid()-based RLS rejected it. Must be set before anything
+    # touches .storage.
+    client.options.headers["Authorization"] = f"Bearer {access_token}"
     return client
 
 
