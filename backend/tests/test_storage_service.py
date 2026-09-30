@@ -43,10 +43,23 @@ class FakeBucketProxy:
         return [{"name": p} for p in paths]
 
 
+class FakeStorageSession:
+    # Models AsyncStorageClient's own independent httpx.AsyncClient
+    # (client.storage.session in the real supabase-py/storage3 client) -
+    # separate from FakePostgrest, since that's exactly the distinction
+    # storage.py's _aclose() must respect.
+    def __init__(self):
+        self.closed = False
+
+    async def aclose(self):
+        self.closed = True
+
+
 class FakeStorage:
     def __init__(self, files_store):
         self.files_store = files_store
         self.buckets: dict[str, FakeBucketProxy] = {}
+        self.session = FakeStorageSession()
 
     def from_(self, bucket_name):
         if bucket_name not in self.buckets:
@@ -99,7 +112,24 @@ async def test_upload_audio_writes_to_the_message_audio_bucket(fake_storage):
 
 async def test_upload_audio_closes_the_client(fake_storage):
     await storage.upload_audio(user(), "path.mp3", b"data")
-    assert fake_storage.created_clients[0].postgrest.closed is True
+    client = fake_storage.created_clients[0]
+    assert client.postgrest.closed is True
+    # client.storage is its own independent httpx session (only reused if
+    # one is explicitly passed in, which client_for never does) - closing
+    # only postgrest would leak it.
+    assert client.storage.session.closed is True
+
+
+async def test_get_signed_url_closes_the_storage_client(fake_storage):
+    await storage.get_signed_url(user(), "path.mp3")
+    client = fake_storage.created_clients[0]
+    assert client.storage.session.closed is True
+
+
+async def test_delete_session_audio_closes_the_storage_client(fake_storage):
+    await storage.delete_session_audio(user(), "owner-1", "session-1")
+    client = fake_storage.created_clients[0]
+    assert client.storage.session.closed is True
 
 
 async def test_get_signed_url_returns_the_signed_url(fake_storage):

@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -594,6 +595,31 @@ def test_download_transcript_sets_content_disposition_with_the_title(monkeypatch
     disposition = response.headers["content-disposition"]
     assert 'filename="Caf meeting.txt"' in disposition
     assert "filename*=UTF-8''Caf%C3%A9%20meeting.txt" in disposition
+
+
+def test_download_transcript_strips_cr_lf_and_quotes_from_the_ascii_filename(monkeypatch, authed):
+    # A title's own validator only trims leading/trailing whitespace - an
+    # embedded CR/LF/quote (still valid ASCII, so not stripped by the
+    # encode("ascii", "ignore") step) must never reach the header raw.
+    row = _session_row(title='evil\r\nX-Injected: 1" title')
+    row["messages"] = []
+
+    async def fake_get_session_with_messages(user, session_id):
+        return row
+
+    monkeypatch.setattr(
+        "routers.sessions.supabase.get_session_with_messages", fake_get_session_with_messages
+    )
+
+    response = client.get(f"/api/sessions/{row['id']}/transcript")
+
+    assert response.status_code == 200
+    disposition = response.headers["content-disposition"]
+    assert "\r" not in disposition
+    assert "\n" not in disposition
+    match = re.search(r'filename="([^;]*)"; filename\*=', disposition)
+    assert match is not None
+    assert '"' not in match.group(1)
 
 
 def test_download_transcript_with_an_unsupported_language_is_400(authed):

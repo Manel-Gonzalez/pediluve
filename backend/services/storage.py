@@ -18,6 +18,17 @@ def audio_storage_path(owner_id: str, session_id: str, message_id: str, language
     return f"{owner_id}/{session_id}/{message_id}.{language}.mp3"
 
 
+async def _aclose(client) -> None:
+    # client.storage is a lazily-created AsyncStorageClient with its own
+    # independent httpx.AsyncClient (only reused if one is explicitly
+    # passed in, which client_for never does) - closing just .postgrest, as
+    # every function below used to, leaked one open httpx session/
+    # connection pool per call. Every function here touches .storage before
+    # this runs, so it's always already been created by the time we get here.
+    await client.postgrest.aclose()
+    await client.storage.session.aclose()
+
+
 async def upload_audio(user: AuthenticatedUser, storage_path: str, audio_bytes: bytes) -> None:
     client = await client_for(user.access_token)
     try:
@@ -25,7 +36,7 @@ async def upload_audio(user: AuthenticatedUser, storage_path: str, audio_bytes: 
             storage_path, audio_bytes, {"content-type": "audio/mpeg", "upsert": "true"}
         )
     finally:
-        await client.postgrest.aclose()
+        await _aclose(client)
 
 
 async def get_signed_url(user: AuthenticatedUser, storage_path: str) -> str:
@@ -36,7 +47,7 @@ async def get_signed_url(user: AuthenticatedUser, storage_path: str) -> str:
         )
         return result["signedURL"]
     finally:
-        await client.postgrest.aclose()
+        await _aclose(client)
 
 
 async def delete_session_audio(user: AuthenticatedUser, owner_id: str, session_id: str) -> None:
@@ -52,4 +63,4 @@ async def delete_session_audio(user: AuthenticatedUser, owner_id: str, session_i
         paths = [f"{prefix}/{entry['name']}" for entry in files]
         await client.storage.from_(AUDIO_BUCKET).remove(paths)
     finally:
-        await client.postgrest.aclose()
+        await _aclose(client)

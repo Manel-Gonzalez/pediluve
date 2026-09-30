@@ -15,6 +15,7 @@ class FakeQuery:
         self.store = store
         self._op = None
         self._payload = None
+        self._on_conflict = None
         self._filters = {}
         self._in_filters = {}
         self._order_column = None
@@ -24,6 +25,12 @@ class FakeQuery:
     def insert(self, payload):
         self._op = "insert"
         self._payload = payload
+        return self
+
+    def upsert(self, payload, on_conflict=""):
+        self._op = "upsert"
+        self._payload = payload
+        self._on_conflict = [c.strip() for c in on_conflict.split(",") if c.strip()]
         return self
 
     def update(self, payload):
@@ -72,6 +79,25 @@ class FakeQuery:
             # that care about ordering overwrite this afterwards, tests that
             # don't just need *some* value present so an `.order()` call
             # doesn't KeyError.
+            row = {
+                "created_at": f"{len(rows):020d}",
+                **self._payload,
+                "id": f"{self.table_name}-{len(rows) + 1}",
+            }
+            rows.append(row)
+            return FakeResult([row])
+        if self._op == "upsert":
+            existing = next(
+                (
+                    row
+                    for row in rows
+                    if all(row.get(c) == self._payload.get(c) for c in self._on_conflict)
+                ),
+                None,
+            )
+            if existing is not None:
+                existing.update(self._payload)
+                return FakeResult([existing])
             row = {
                 "created_at": f"{len(rows):020d}",
                 **self._payload,
@@ -300,6 +326,27 @@ async def test_create_message_audio_inserts_and_returns_the_row(fake_client):
     assert row["message_id"] == message["id"]
     assert row["language"] == "fr"
     assert row["storage_path"] == "owner/session/msg.fr.mp3"
+
+
+async def test_create_message_audio_upserts_on_a_concurrent_duplicate(fake_client):
+    # Simulates two concurrent request_audio calls for the same
+    # (message_id, language) racing a cache miss (services/tts_cache.py has
+    # no locking around that window) - the second call must not raise on
+    # migration 006's unique(message_id, language) constraint.
+    session_id = await create_session_id(user())
+    message = await supabase.save_message(user(), session_id, 0, "hello")
+
+    first = await supabase.create_message_audio(user(), message["id"], "fr", "path-a.mp3")
+    second = await supabase.create_message_audio(user(), message["id"], "fr", "path-b.mp3")
+
+    assert first["message_id"] == second["message_id"] == message["id"]
+    rows = [
+        row
+        for row in fake_client.store["message_audio"]
+        if row["message_id"] == message["id"] and row["language"] == "fr"
+    ]
+    assert len(rows) == 1
+    assert rows[0]["storage_path"] == "path-b.mp3"
 
 
 async def test_get_message_audio_returns_none_when_not_cached(fake_client):

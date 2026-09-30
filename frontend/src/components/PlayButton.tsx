@@ -1,22 +1,30 @@
-import { useAudioPlayer } from '../hooks/useAudioPlayer'
-
 // Per-line playback (KAN-33/KAN-58): first click requests the audio (a
 // cache miss costs one ElevenLabs call server-side, a hit is instant), a
 // later click just replays the signed URL already held.
+//
+// playingUrl/play/stop come from a single useAudioPlayer() instance owned
+// by the page, not one per button - a page renders one PlayButton per
+// line, and they must share one underlying <audio> element so starting
+// line B's playback stops line A's, rather than both playing at once.
 export function PlayButton({
   index,
   audioUrl,
   loading,
   error,
   onRequestAudio,
+  playingUrl,
+  play,
+  stop,
 }: {
   index: number
   audioUrl: string | null
   loading: boolean
   error: string | null
   onRequestAudio: (index: number) => void
+  playingUrl: string | null
+  play: (url: string) => void
+  stop: () => void
 }) {
-  const { playingUrl, play, stop } = useAudioPlayer()
   const isPlaying = audioUrl !== null && playingUrl === audioUrl
 
   const handleClick = () => {

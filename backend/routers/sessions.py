@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 from urllib.parse import quote
 
@@ -187,10 +188,18 @@ def _transcript_filename(title: str | None, target_language: str | None) -> str:
 
 def _content_disposition(filename: str) -> str:
     # RFC 5987: filename* carries the real (possibly non-ASCII) name,
-    # percent-encoded; filename= stays a plain-ASCII fallback for clients
-    # that don't understand filename* at all - a title with no non-ASCII
+    # percent-encoded (quote() already escapes CR/LF/quotes there, nothing
+    # more needed); filename= stays a plain-ASCII fallback for clients that
+    # don't understand filename* at all - a title with no non-ASCII
     # characters makes the two identical.
-    ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or "transcript.txt"
+    #
+    # SessionTitle's own validator only trims leading/trailing whitespace,
+    # so a title carrying an embedded CR/LF or a bare `"` (still valid
+    # ASCII) would otherwise land unescaped inside a quoted header value -
+    # stripped here rather than at the model layer, since a title is only
+    # dangerous in this one HTTP-header context, nowhere else it's used.
+    ascii_fallback = filename.encode("ascii", "ignore").decode("ascii")
+    ascii_fallback = re.sub(r'[\r\n"]', "", ascii_fallback) or "transcript.txt"
     return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
 
 

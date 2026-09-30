@@ -160,6 +160,25 @@ async def test_ensure_language_is_a_no_op_when_nothing_is_missing():
     assert calls == []
 
 
+async def test_ensure_language_survives_a_translate_many_failure(monkeypatch):
+    # translate_many's own per-chunk resilience only covers HTTP failures -
+    # a config error (e.g. DEEPL_API_KEY unset) raises before ever reaching
+    # that loop. ensure_language has no caller-side try/except of its own
+    # (routers/viewer_ws.py's join_live/set_viewer_language don't guard it),
+    # so it must not let that propagate and kill the viewer's socket.
+    async def failing_translate_many(texts, target_language):
+        raise RuntimeError("DEEPL_API_KEY is set but empty")
+
+    monkeypatch.setattr(live_rooms.deepl, "translate_many", failing_translate_many)
+
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    room.lines = [live_rooms.RoomLine(index=0, original_text="uno")]
+
+    await room.ensure_language("fr")
+
+    assert room.lines[0].translations["fr"] is None
+
+
 def test_snapshot_returns_lines_in_a_given_language():
     room = LiveRoom(session_id="s1", title=None, source_language=None)
     room.lines = [

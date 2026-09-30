@@ -2,6 +2,7 @@ import { Link, useParams } from 'react-router-dom'
 import { AddToMySessions } from '../components/AddToMySessions'
 import { PlayButton } from '../components/PlayButton'
 import { TranscriptRow } from '../components/TranscriptRow'
+import { useAudioPlayer } from '../hooks/useAudioPlayer'
 import { useLiveViewer } from '../hooks/useLiveViewer'
 import { SUPPORTED_LANGUAGES } from '../lib/languageControls'
 
@@ -35,6 +36,9 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
     audioLoading,
     requestAudio,
   } = useLiveViewer(shareToken)
+  // One shared player, not one per line (PlayButton) - starting line B's
+  // playback must stop line A's, not play both at once.
+  const { playingUrl, play, stop } = useAudioPlayer()
 
   if (joinStatus === 'not_found') {
     return (
@@ -102,6 +106,9 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
                 loading={audioLoading[line.index] ?? false}
                 error={audioErrors[line.index] ?? null}
                 onRequestAudio={requestAudio}
+                playingUrl={playingUrl}
+                play={play}
+                stop={stop}
               />
             )}
           </div>

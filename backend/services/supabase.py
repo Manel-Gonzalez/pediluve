@@ -132,11 +132,22 @@ async def get_message_audio(user: AuthenticatedUser, message_id: str, language: 
 async def create_message_audio(
     user: AuthenticatedUser, message_id: str, language: str, storage_path: str
 ) -> dict:
+    # Upsert, not a plain insert: two viewers with the same target_language
+    # can both hit a cache miss for the same (message_id, language) at
+    # nearly the same time (tts_cache.get_or_create_audio_url has no
+    # locking around that window) - a plain insert would have the second
+    # one fail migration 006's unique(message_id, language) constraint,
+    # even though the audio itself was already uploaded successfully
+    # (storage.upload_audio's own upsert already makes that half of it
+    # idempotent). on_conflict makes this half idempotent too.
     client = await client_for(user.access_token)
     try:
         result = (
             await client.table("message_audio")
-            .insert({"message_id": message_id, "language": language, "storage_path": storage_path})
+            .upsert(
+                {"message_id": message_id, "language": language, "storage_path": storage_path},
+                on_conflict="message_id,language",
+            )
             .execute()
         )
         return result.data[0]

@@ -184,7 +184,19 @@ class LiveRoom:
         if not missing_indices:
             return
         texts = [self.lines[index].original_text for index in missing_indices]
-        results = await deepl.translate_many(texts, target_language)
+        try:
+            results = await deepl.translate_many(texts, target_language)
+        except Exception:
+            # translate_many's own per-chunk resilience only covers HTTP
+            # failures - a config error (DEEPL_API_KEY unset/blank) raises
+            # before ever reaching that loop. Callers (routers/viewer_ws.py's
+            # join_live/set_viewer_language) have no try/except of their own
+            # around this call, so letting it propagate would silently kill
+            # the viewer's socket instead of sending an error - same
+            # "translation unavailable" fallback as a genuine per-chunk
+            # failure keeps this resilient either way.
+            logger.exception("Could not fill translation gaps for %s", target_language)
+            results = [None] * len(missing_indices)
         for index, result in zip(missing_indices, results):
             self.lines[index].translations[target_language] = result
 
