@@ -577,6 +577,15 @@ Linear, Raycast, Granola, and Apple Live Captions for the viewer.
   blurred transcript, off-screen once a phone had scrolled down. It's now `fixed` and centred,
   as a sibling of the blur rather than inside it, because `backdrop-filter` would make the blur
   its containing block.
+- **One audio generation per (line, language) at a time (`services/tts_cache.py`).** Found in a
+  real test with three listeners in Spanish: two asked for a new line's audio at the same
+  moment. Both missed the cache, so both paid for an ElevenLabs call and uploaded to the same
+  path. The second upload is an overwrite, which Storage RLS refuses because migration 007 has
+  no UPDATE policy. That listener got "Audio unavailable" and Listen live skipped the line, at
+  random. Concurrent misses now await one shared generation, shielded so a listener leaving
+  doesn't cancel it for the rest. A failure isn't remembered, so the next request tries again.
+  The rejected alternative was an UPDATE policy: it would stop the error but still pay for every
+  duplicate call. In-process is enough because every room lives in this one uvicorn process.
 - **Every animation behind `motion-safe:`**, including the recording ping, the speaking dots, the
   login hero's waveform and the smooth auto-scroll.
 
