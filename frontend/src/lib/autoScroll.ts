@@ -15,3 +15,11 @@ export function unseenCount(current: number, prevLength: number, nextLength: num
   if (pinned) return 0
   return current + Math.max(0, nextLength - prevLength)
 }
+
+// The bottom "jump to latest" button (KAN-86): there as soon as the reader
+// scrolls up, so the way back never depends on a new line arriving first,
+// and it counts what they missed once lines do arrive.
+export function jumpControl({ pinned, unseen }: { pinned: boolean; unseen: number }): 'hidden' | 'arrow' | 'count' {
+  if (pinned) return 'hidden'
+  return unseen > 0 ? 'count' : 'arrow'
+}

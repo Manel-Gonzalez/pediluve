@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from services import tts_cache
@@ -74,3 +76,70 @@ async def test_different_languages_for_the_same_message_are_cached_separately(fa
 
     assert fake_backends["synthesize"] == ["hola", "hola"]
     assert len(fake_backends["create_message_audio"]) == 2
+
+
+async def test_concurrent_requests_for_the_same_line_share_one_generation(fake_backends, monkeypatch):
+    # Two viewers in the same language asking for a brand-new line at once
+    # both miss the cache. Each used to synthesize (paying twice) and upload
+    # to the same path - and the second upload, an overwrite, is refused by
+    # Storage RLS (migration 007 has no UPDATE policy), so one viewer got
+    # "Audio unavailable" and its Listen live skipped the line.
+    release = asyncio.Event()
+
+    async def slow_synthesize(text):
+        fake_backends["synthesize"].append(text)
+        await release.wait()
+        return b"audio-bytes"
+
+    monkeypatch.setattr("services.tts_cache.elevenlabs.synthesize", slow_synthesize)
+
+    first = asyncio.ensure_future(tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "es"))
+    second = asyncio.ensure_future(tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "es"))
+    await asyncio.sleep(0)
+    release.set()
+    results = await asyncio.gather(first, second)
+
+    assert fake_backends["synthesize"] == ["hola"]
+    assert len(fake_backends["upload_audio"]) == 1
+    assert results[0][0] == results[1][0] == "https://signed.example/owner-1/session-1/message-1.es.mp3"
+
+
+async def test_a_failed_generation_is_retried_by_the_next_request(fake_backends, monkeypatch):
+    attempts = []
+
+    async def flaky_synthesize(text):
+        attempts.append(text)
+        if len(attempts) == 1:
+            raise RuntimeError("ElevenLabs is down")
+        return b"audio-bytes"
+
+    monkeypatch.setattr("services.tts_cache.elevenlabs.synthesize", flaky_synthesize)
+
+    with pytest.raises(RuntimeError):
+        await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "es")
+    url, cached = await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "es")
+
+    assert len(attempts) == 2
+    assert url == "https://signed.example/owner-1/session-1/message-1.es.mp3"
+    assert cached is False
+
+
+async def test_one_requester_going_away_does_not_cancel_the_generation_for_others(fake_backends, monkeypatch):
+    release = asyncio.Event()
+
+    async def slow_synthesize(text):
+        fake_backends["synthesize"].append(text)
+        await release.wait()
+        return b"audio-bytes"
+
+    monkeypatch.setattr("services.tts_cache.elevenlabs.synthesize", slow_synthesize)
+
+    leaver = asyncio.ensure_future(tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "es"))
+    stayer = asyncio.ensure_future(tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "es"))
+    await asyncio.sleep(0)
+    leaver.cancel()  # e.g. that viewer closed the page mid-generation
+    release.set()
+
+    url, _ = await stayer
+    assert url == "https://signed.example/owner-1/session-1/message-1.es.mp3"
+    assert fake_backends["synthesize"] == ["hola"]

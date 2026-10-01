@@ -24,6 +24,10 @@ export function AddToMySessions({
   const { session } = useAuth()
   const location = useLocation()
   const [status, setStatus] = useState<'idle' | 'saving' | 'added' | 'error'>('idle')
+  // In the viewer's sticky header (KAN-86), the short label gives way to
+  // the icon alone on the narrowest phones, so the language picker keeps
+  // its room - still the accessible name, just visually hidden.
+  const short = (text: string) => <span className="max-[380px]:sr-only">{text}</span>
 
   if (!session) {
     return (
@@ -34,7 +38,7 @@ export function AddToMySessions({
         className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-primary hover:bg-highlight ${FOCUS_RING}`}
       >
         <UserPlus className="h-4 w-4" aria-hidden />
-        {compact ? 'Save' : 'Sign in to save it to your sessions'}
+        {compact ? short('Save') : 'Sign in to save it to your sessions'}
       </Link>
     )
   }
@@ -43,7 +47,7 @@ export function AddToMySessions({
     return (
       <p role="status" className="inline-flex h-8 items-center gap-1.5 px-2 text-sm text-muted">
         <Check className="h-4 w-4 text-primary" aria-hidden />
-        {compact ? 'Saved' : 'Added to your sessions'}
+        {compact ? short('Saved') : 'Added to your sessions'}
       </p>
     )
   }
@@ -63,9 +67,10 @@ export function AddToMySessions({
       size="sm"
       onClick={handleClick}
       loading={status === 'saving'}
+      title={compact ? 'Add to my sessions' : undefined}
       icon={<UserPlus className="h-4 w-4" aria-hidden />}
     >
-      {status === 'saving' ? 'Adding…' : status === 'error' ? 'Retry' : compact ? 'Save' : 'Add to my sessions'}
+      {status === 'saving' ? 'Adding…' : status === 'error' ? 'Retry' : compact ? short('Save') : 'Add to my sessions'}
     </Button>
   )
 }

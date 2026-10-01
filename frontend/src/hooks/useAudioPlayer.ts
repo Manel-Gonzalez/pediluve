@@ -29,7 +29,13 @@ export function useAudioPlayer() {
   const getAudio = useCallback(() => {
     if (!audioRef.current) {
       const audio = new Audio()
-      audio.onended = finish
+      // A stale "ended" from a track already replaced (the 1ms unlock clip,
+      // right as the first real line starts) must not count as that line
+      // finishing - "Listen live" would skip it. Loading a new src resets
+      // .ended, so only the track actually playing passes this.
+      audio.onended = () => {
+        if (audio.ended) finish()
+      }
       audioRef.current = audio
     }
     return audioRef.current

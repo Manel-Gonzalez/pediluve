@@ -556,6 +556,36 @@ Linear, Raycast, Granola, and Apple Live Captions for the viewer.
   line one of a long session would fire dozens of ElevenLabs calls together. That would spend
   credits on lines the listener may never reach and could hit the plan's concurrency limit.
   `audioToRequest()` asks only for the line playing plus the next two; cached lines cost nothing.
+- **A way back to the latest line that's always there (KAN-86).** The view follows new lines unless
+  the reader scrolled up (KAN-82), but the only way back was the "N new lines" chip, which only
+  appeared once a line arrived; during a pause there was none. Now a round arrow shows as soon as
+  the reader scrolls up, and it becomes the count when lines arrive (`jumpControl()`). Tapping
+  either pins the view again.
+- **The viewer's controls live in the sticky header (KAN-86).** On a phone, Listen live, the
+  language, Save and Download scrolled out of reach down a long transcript. They now sit in a
+  second header row. That costs about 50px of a phone screen, but the header is translucent and
+  these are the page's only actions. Below 380px "Save" goes icon-only, so the language picker
+  keeps its room. When the session ends, the row goes and the ended notice takes its place, in
+  the page as before.
+- **The audio unlock must play out (KAN-86 fix).** On a phone, Listen live skipped its first line.
+  KAN-85's `start()` called `stop()` right after `unlock()`, which aborted the silent unlock
+  clip, so the first real `play()` could be refused. `stop()` now runs first. The shared
+  `<audio>` element also ignores an `ended` event unless `audio.ended` is true. A late one from a
+  replaced track (the unlock clip, as the first line starts) would otherwise count as that line
+  finishing.
+- **The pause card is centred on the screen, not the transcript.** It sat at the top of the
+  blurred transcript, off-screen once a phone had scrolled down. It's now `fixed` and centred,
+  as a sibling of the blur rather than inside it, because `backdrop-filter` would make the blur
+  its containing block.
+- **One audio generation per (line, language) at a time (`services/tts_cache.py`).** Found in a
+  real test with three listeners in Spanish: two asked for a new line's audio at the same
+  moment. Both missed the cache, so both paid for an ElevenLabs call and uploaded to the same
+  path. The second upload is an overwrite, which Storage RLS refuses because migration 007 has
+  no UPDATE policy. That listener got "Audio unavailable" and Listen live skipped the line, at
+  random. Concurrent misses now await one shared generation, shielded so a listener leaving
+  doesn't cancel it for the rest. A failure isn't remembered, so the next request tries again.
+  The rejected alternative was an UPDATE policy: it would stop the error but still pay for every
+  duplicate call. In-process is enough because every room lives in this one uvicorn process.
 - **Every animation behind `motion-safe:`**, including the recording ping, the speaking dots, the
   login hero's waveform and the smooth auto-scroll.
 

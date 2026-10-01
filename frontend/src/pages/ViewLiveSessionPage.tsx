@@ -13,7 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { AddToMySessions } from '../components/AddToMySessions'
-import { Button } from '../components/Button'
+import { Button, FOCUS_RING } from '../components/Button'
 import { IconButton } from '../components/IconButton'
 import { LogoMark } from '../components/LogoMark'
 import { PlayButton } from '../components/PlayButton'
@@ -27,6 +27,7 @@ import { SUPPORTED_LANGUAGES } from '../lib/languageControls'
 import { languageName } from '../lib/languageLabel'
 import { buildLiveTranscriptText } from '../lib/liveTranscript'
 import type { LiveState } from '../lib/types'
+import { jumpControl } from '../lib/autoScroll'
 import { recordingNotice, viewerControls, type RecordingNotice } from '../lib/viewerState'
 
 // Anonymous, read-only counterpart to LiveSessionPage (KAN-50) - reached by
@@ -70,7 +71,8 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
   })
   const notice = useRecordingNotice(state, seenRecording || lines.length > 0)
   const transcriptText = buildLiveTranscriptText(lines)
-  const { unseen, jumpToLatest } = useStickToBottom(lines.length, controls.showSpeaking)
+  const { unseen, pinned, jumpToLatest } = useStickToBottom(lines.length, controls.showSpeaking)
+  const jump = jumpControl({ pinned, unseen })
   // The line whose Play was tapped before its audio existed yet - played
   // automatically once audio_ready arrives, so that first tap isn't just
   // a silent "fetch" that needs a second tap to actually hear anything.
@@ -170,13 +172,52 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
           />
           <ThemeToggle />
         </div>
+        {/* The listening controls ride in the sticky header (KAN-86), so
+            they stay in reach at the bottom of a long transcript on a phone.
+            Once the session ends, the ended notice below takes their place. */}
+        {!controls.showEndedNotice && (
+          <div className="mx-auto flex max-w-2xl items-center gap-2 px-4 pb-3">
+            <Button
+              size="sm"
+              variant={listen.listening ? 'primary' : 'secondary'}
+              onClick={handleToggleListen}
+              disabled={!controls.listenAvailable}
+              aria-pressed={listen.listening}
+              icon={<Headphones className="h-4 w-4" aria-hidden />}
+              className="shrink-0 whitespace-nowrap"
+            >
+              {listen.listening ? 'Stop listening' : 'Listen live'}
+            </Button>
+            <label className="sr-only" htmlFor="viewer-language">
+              Your language
+            </label>
+            <select
+              id="viewer-language"
+              value={targetLanguage}
+              disabled={controls.languageLocked}
+              onChange={(event) => handleLanguageChange(event.target.value)}
+              className="h-8 min-w-0 rounded-lg border border-line px-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {SUPPORTED_LANGUAGES.map((code) => (
+                <option key={code} value={code}>
+                  {languageName(code)}
+                </option>
+              ))}
+            </select>
+            <div className="ml-auto flex items-center gap-1">
+              {joinStatus === 'joined' && (
+                <AddToMySessions shareToken={shareToken} targetLanguage={targetLanguage} compact />
+              )}
+              {downloadButton}
+            </div>
+          </div>
+        )}
         {controls.statusBar !== 'none' && <WaitingBar kind={controls.statusBar} />}
+        {notice && state === 'recording' && <RecordingToast key={notice.id} kind={notice.kind} />}
       </header>
 
-      {notice && state === 'recording' && <RecordingToast key={notice.id} kind={notice.kind} />}
-
       <main className="mx-auto max-w-2xl px-4 pb-16 pt-4">
-        {controls.showEndedNotice ? (
+        {controls.showEndedNotice && (
           <section className="mb-6 rounded-xl border border-line bg-surface p-5">
             <div className="flex items-start gap-3">
               <CircleCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden />
@@ -198,44 +239,9 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
               </div>
             </div>
           </section>
-        ) : (
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              variant={listen.listening ? 'primary' : 'secondary'}
-              onClick={handleToggleListen}
-              disabled={!controls.listenAvailable}
-              aria-pressed={listen.listening}
-              icon={<Headphones className="h-4 w-4" aria-hidden />}
-            >
-              {listen.listening ? 'Stop listening' : 'Listen live'}
-            </Button>
-            <label className="sr-only" htmlFor="viewer-language">
-              Your language
-            </label>
-            <select
-              id="viewer-language"
-              value={targetLanguage}
-              disabled={controls.languageLocked}
-              onChange={(event) => handleLanguageChange(event.target.value)}
-              className="h-8 rounded-lg border border-line px-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {SUPPORTED_LANGUAGES.map((code) => (
-                <option key={code} value={code}>
-                  {languageName(code)}
-                </option>
-              ))}
-            </select>
-            <div className="ml-auto flex items-center gap-1">
-              {joinStatus === 'joined' && (
-                <AddToMySessions shareToken={shareToken} targetLanguage={targetLanguage} compact />
-              )}
-              {downloadButton}
-            </div>
-          </div>
         )}
         {listen.listening && (
-          <p className="-mt-2 mb-4 text-xs text-muted">
+          <p className="mb-4 text-xs text-muted">
             {listenFromLine
               ? 'Reading from the line you picked, then each new line as it arrives.'
               : 'Reading each new line aloud as it arrives.'}
@@ -299,17 +305,31 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
           )}
         </section>
 
-        {unseen > 0 && (
+        {/* KAN-86: there as soon as the reader scrolls up, not only once a
+            new line arrives - and tapping it pins the view to new lines again. */}
+        {jump !== 'hidden' && (
           <div className="pointer-events-none fixed inset-x-0 bottom-6 z-20 flex justify-center">
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={jumpToLatest}
-              icon={<ArrowDown className="h-4 w-4" aria-hidden />}
-              className="pointer-events-auto rounded-full shadow-lg"
-            >
-              {unseen} new line{unseen === 1 ? '' : 's'}
-            </Button>
+            {jump === 'count' ? (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={jumpToLatest}
+                icon={<ArrowDown className="h-4 w-4" aria-hidden />}
+                className="pointer-events-auto rounded-full shadow-lg"
+              >
+                {unseen} new line{unseen === 1 ? '' : 's'}
+              </Button>
+            ) : (
+              <button
+                type="button"
+                aria-label="Jump to the latest line"
+                title="Jump to the latest line"
+                onClick={jumpToLatest}
+                className={`pointer-events-auto inline-flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface text-fg shadow-lg hover:bg-subtle ${FOCUS_RING}`}
+              >
+                <ArrowDown className="h-5 w-5" aria-hidden />
+              </button>
+            )}
           </div>
         )}
       </main>
@@ -349,18 +369,25 @@ const WAITING = {
 function WaitingOverlay({ kind, onDismiss }: { kind: 'not_started' | 'paused'; onDismiss: () => void }) {
   const { Icon, title, detail } = WAITING[kind]
   return (
-    <div className="absolute inset-0 z-10 flex items-start justify-center rounded-xl bg-canvas/60 pt-16 backdrop-blur-sm">
-      <div className="relative mx-4 flex max-w-xs flex-col items-center rounded-2xl border border-line bg-surface px-8 py-5 text-center shadow-xl">
-        <IconButton label="Hide this notice" onClick={onDismiss} className="absolute right-1 top-1">
-          <X className="h-4 w-4" aria-hidden />
-        </IconButton>
-        <Icon className="mb-2 h-6 w-6 text-primary" aria-hidden />
-        <div role="status" aria-live="polite">
-          <p className="font-medium">{title}</p>
-          <p className="mt-1 text-sm text-muted">{detail}</p>
+    <>
+      <div aria-hidden className="absolute inset-0 z-10 rounded-xl bg-canvas/60 backdrop-blur-sm" />
+      {/* Centred on the screen, not the top of the transcript: scrolled
+          down a long one on a phone, the top is off-screen. A sibling of
+          the blur, not inside it - backdrop-filter would make it the
+          card's containing block and break the fixed positioning. */}
+      <div className="pointer-events-none fixed inset-x-0 top-1/2 z-10 flex -translate-y-1/2 justify-center">
+        <div className="pointer-events-auto relative mx-4 flex max-w-xs flex-col items-center rounded-2xl border border-line bg-surface px-8 py-5 text-center shadow-xl">
+          <IconButton label="Hide this notice" onClick={onDismiss} className="absolute right-1 top-1">
+            <X className="h-4 w-4" aria-hidden />
+          </IconButton>
+          <Icon className="mb-2 h-6 w-6 text-primary" aria-hidden />
+          <div role="status" aria-live="polite">
+            <p className="font-medium">{title}</p>
+            <p className="mt-1 text-sm text-muted">{detail}</p>
+          </div>
         </div>
       </div>
-    </div>
+    </>
   )
 }
 
@@ -407,9 +434,11 @@ function useRecordingNotice(state: LiveState | null, recordedBefore: boolean) {
   return notice
 }
 
+// Rendered inside the sticky header, hanging just below it - so it clears
+// the header whatever its height (title, controls, status bar).
 function RecordingToast({ kind }: { kind: RecordingNotice }) {
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-20 z-30 flex justify-center px-4">
+    <div className="pointer-events-none absolute inset-x-0 top-full mt-3 flex justify-center px-4">
       <p
         role="status"
         className="flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary shadow-lg motion-safe:animate-caption-in"

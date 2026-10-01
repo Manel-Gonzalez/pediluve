@@ -14,6 +14,13 @@ export function useStickToBottom(count: number, extra: unknown) {
   // Only scrolling *up* away from the bottom unpins: our own smooth scroll
   // down passes through "not at the bottom yet" positions too.
   const pinnedRef = useRef(true)
+  // The same flag as state, for rendering the jump button (KAN-86) - the
+  // ref is what the effects read without re-subscribing.
+  const [pinned, setPinnedState] = useState(true)
+  const setPinned = useCallback((value: boolean) => {
+    pinnedRef.current = value
+    setPinnedState(value)
+  }, [])
   const lastScrollYRef = useRef(0)
   const prevCountRef = useRef(count)
   const [unseen, setUnseen] = useState(0)
@@ -27,16 +34,16 @@ export function useStickToBottom(count: number, extra: unknown) {
         scrollHeight: document.documentElement.scrollHeight,
       })
       if (atBottom) {
-        pinnedRef.current = true
+        setPinned(true)
         setUnseen(0)
       } else if (y < lastScrollYRef.current) {
-        pinnedRef.current = false
+        setPinned(false)
       }
       lastScrollYRef.current = y
     }
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
-  }, [])
+  }, [setPinned])
 
   useEffect(() => {
     const prev = prevCountRef.current
@@ -46,10 +53,10 @@ export function useStickToBottom(count: number, extra: unknown) {
   }, [count, extra])
 
   const jumpToLatest = useCallback(() => {
-    pinnedRef.current = true
+    setPinned(true)
     setUnseen(0)
     scrollToBottom()
-  }, [])
+  }, [setPinned])
 
-  return { unseen, jumpToLatest }
+  return { unseen, pinned, jumpToLatest }
 }
