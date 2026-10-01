@@ -264,6 +264,10 @@ confirmation), KAN-80 (viewer paused/not-started overlay, ended notice, clean fi
 KAN-68/69/70 superseded; KAN-71 stays parked under KAN-67. Verified on real devices (PC + phone,
 LAN and tunnel). Backend tests (`pytest`, 273) and frontend tests (`vitest`, 138) passing.
 
+KAN-84 — the viewer's pause overlay can be closed (a slim status bar replaces it for the rest of
+the visit, so earlier lines can be played during a pause), plus a "Recording resumed" toast. On
+`feature/KAN-84`. Frontend tests (`vitest`, 145) passing.
+
 Next: record the README demo GIF and screenshots. KAN-71 (owner-reload grace period) is the one
 parked follow-up. Phase 6 stays parked - start with its spike (see Phase gates) only if a real
 multi-mic use case shows up.
