@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, Mic, Plus, X } from 'lucide-react'
@@ -41,6 +41,12 @@ function HomePageContent({ session }: { session: Session }) {
   // Bumped to refetch the current page, e.g. after a delete so the next
   // session slides up into the freed slot.
   const [reloadKey, setReloadKey] = useState(0)
+  const listRef = useRef<HTMLUListElement>(null)
+
+  // The list scrolls inside its own card, so a new page starts at its top.
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: 0 })
+  }, [page])
 
   // `replace` for corrections (clamping, a removal stepping back) so they
   // don't leave a dead entry in history; a push for Prev/Next.
@@ -102,8 +108,10 @@ function HomePageContent({ session }: { session: Session }) {
   const isEmpty = !loading && !error && total === 0
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
-      <div className="mb-6 flex items-end justify-between gap-4">
+    // Fills the viewport under the 3.5rem nav: the page itself never
+    // scrolls, only the session list inside its card does.
+    <main className="mx-auto flex h-[calc(100dvh-3.5rem-1px)] max-w-3xl flex-col px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mb-6 flex shrink-0 items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Sessions</h1>
           <p className="mt-1 text-sm tabular-nums text-muted">
@@ -116,7 +124,7 @@ function HomePageContent({ session }: { session: Session }) {
       </div>
 
       {notice && (
-        <div role="status" className="mb-4 flex items-center gap-2 rounded-lg bg-subtle py-1 pl-4 pr-1 text-sm text-muted">
+        <div role="status" className="mb-4 flex shrink-0 items-center gap-2 rounded-lg bg-subtle py-1 pl-4 pr-1 text-sm text-muted">
           <span className="flex-1">{notice}</span>
           <IconButton label="Dismiss" onClick={() => setNotice(null)}>
             <X className="h-4 w-4" aria-hidden />
@@ -124,7 +132,7 @@ function HomePageContent({ session }: { session: Session }) {
         </div>
       )}
       {error && (
-        <p role="alert" className="mb-4 rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger">
+        <p role="alert" className="mb-4 shrink-0 rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger">
           {error}
         </p>
       )}
@@ -147,37 +155,39 @@ function HomePageContent({ session }: { session: Session }) {
       )}
 
       {!loading && sessions.length > 0 && (
-        <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
-          {sessions.map((item) => (
-            <SessionListRow
-              key={item.id}
-              session={session}
-              item={item}
-              onRenamed={handleRenamed}
-              onDeleted={(id) => handleRemoved(id)}
-              onMissing={(id) => handleRemoved(id, 'That session no longer exists.')}
-            />
-          ))}
-        </ul>
-      )}
-
-      {!loading && total > 0 && (
-        <nav aria-label="Pagination" className="mt-4 flex items-center justify-between gap-4 text-sm text-muted">
-          <span className="tabular-nums">{rangeLabel(page, PAGE_SIZE, total)}</span>
-          {pages > 1 && (
-            <div className="flex items-center gap-1">
-              <IconButton label="Previous page" onClick={() => goToPage(page - 1)} disabled={page <= 1}>
-                <ChevronLeft className="h-5 w-5" aria-hidden />
-              </IconButton>
-              <span className="px-2 tabular-nums" aria-current="page">
-                Page {page} of {pages}
-              </span>
-              <IconButton label="Next page" onClick={() => goToPage(page + 1)} disabled={page >= pages}>
-                <ChevronRight className="h-5 w-5" aria-hidden />
-              </IconButton>
-            </div>
-          )}
-        </nav>
+        <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-line bg-surface">
+          <ul ref={listRef} className="min-h-0 divide-y divide-line overflow-y-auto overscroll-contain">
+            {sessions.map((item) => (
+              <SessionListRow
+                key={item.id}
+                session={session}
+                item={item}
+                onRenamed={handleRenamed}
+                onDeleted={(id) => handleRemoved(id)}
+                onMissing={(id) => handleRemoved(id, 'That session no longer exists.')}
+              />
+            ))}
+          </ul>
+          <nav
+            aria-label="Pagination"
+            className="flex shrink-0 items-center justify-between gap-4 border-t border-line px-4 py-2 text-sm text-muted"
+          >
+            <span className="tabular-nums">{rangeLabel(page, PAGE_SIZE, total)}</span>
+            {pages > 1 && (
+              <div className="flex items-center gap-1">
+                <IconButton label="Previous page" onClick={() => goToPage(page - 1)} disabled={page <= 1}>
+                  <ChevronLeft className="h-5 w-5" aria-hidden />
+                </IconButton>
+                <span className="px-2 tabular-nums" aria-current="page">
+                  Page {page} of {pages}
+                </span>
+                <IconButton label="Next page" onClick={() => goToPage(page + 1)} disabled={page >= pages}>
+                  <ChevronRight className="h-5 w-5" aria-hidden />
+                </IconButton>
+              </div>
+            )}
+          </nav>
+        </section>
       )}
 
       <NewSessionModal session={session} open={creating} onClose={() => setCreating(false)} />
@@ -187,7 +197,7 @@ function HomePageContent({ session }: { session: Session }) {
 
 function SkeletonList() {
   return (
-    <ul aria-hidden className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
+    <ul aria-hidden className="min-h-0 divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
       {Array.from({ length: 5 }, (_, i) => (
         <li key={i} className="flex items-center gap-4 px-4 py-4">
           <div className="flex-1 space-y-2">
