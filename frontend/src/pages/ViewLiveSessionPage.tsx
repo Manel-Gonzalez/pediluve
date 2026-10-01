@@ -369,18 +369,25 @@ const WAITING = {
 function WaitingOverlay({ kind, onDismiss }: { kind: 'not_started' | 'paused'; onDismiss: () => void }) {
   const { Icon, title, detail } = WAITING[kind]
   return (
-    <div className="absolute inset-0 z-10 flex items-start justify-center rounded-xl bg-canvas/60 pt-16 backdrop-blur-sm">
-      <div className="relative mx-4 flex max-w-xs flex-col items-center rounded-2xl border border-line bg-surface px-8 py-5 text-center shadow-xl">
-        <IconButton label="Hide this notice" onClick={onDismiss} className="absolute right-1 top-1">
-          <X className="h-4 w-4" aria-hidden />
-        </IconButton>
-        <Icon className="mb-2 h-6 w-6 text-primary" aria-hidden />
-        <div role="status" aria-live="polite">
-          <p className="font-medium">{title}</p>
-          <p className="mt-1 text-sm text-muted">{detail}</p>
+    <>
+      <div aria-hidden className="absolute inset-0 z-10 rounded-xl bg-canvas/60 backdrop-blur-sm" />
+      {/* Centred on the screen, not the top of the transcript: scrolled
+          down a long one on a phone, the top is off-screen. A sibling of
+          the blur, not inside it - backdrop-filter would make it the
+          card's containing block and break the fixed positioning. */}
+      <div className="pointer-events-none fixed inset-x-0 top-1/2 z-10 flex -translate-y-1/2 justify-center">
+        <div className="pointer-events-auto relative mx-4 flex max-w-xs flex-col items-center rounded-2xl border border-line bg-surface px-8 py-5 text-center shadow-xl">
+          <IconButton label="Hide this notice" onClick={onDismiss} className="absolute right-1 top-1">
+            <X className="h-4 w-4" aria-hidden />
+          </IconButton>
+          <Icon className="mb-2 h-6 w-6 text-primary" aria-hidden />
+          <div role="status" aria-live="polite">
+            <p className="font-medium">{title}</p>
+            <p className="mt-1 text-sm text-muted">{detail}</p>
+          </div>
         </div>
       </div>
-    </div>
+    </>
   )
 }
 
