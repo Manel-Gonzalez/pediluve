@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowDown, CircleCheck, CirclePause, Download, Headphones, Hourglass, Unplug } from 'lucide-react'
+import { ArrowDown, CircleCheck, CirclePause, Download, Headphones, Hourglass, Radio, Unplug, X } from 'lucide-react'
 import { AddToMySessions } from '../components/AddToMySessions'
 import { Button } from '../components/Button'
 import { IconButton } from '../components/IconButton'
@@ -16,7 +16,7 @@ import { SUPPORTED_LANGUAGES } from '../lib/languageControls'
 import { languageName } from '../lib/languageLabel'
 import { buildLiveTranscriptText } from '../lib/liveTranscript'
 import type { LiveState } from '../lib/types'
-import { viewerControls } from '../lib/viewerState'
+import { recordingNotice, viewerControls, type RecordingNotice } from '../lib/viewerState'
 
 // Anonymous, read-only counterpart to LiveSessionPage (KAN-50) - reached by
 // a QR code/share link, no Supabase session involved at all (see App.tsx:
@@ -46,7 +46,18 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
   // playback must stop line A's, not play both at once.
   const { playingUrl, play, stop, unlock } = useAudioPlayer()
   const listen = useLiveListen({ lines, audioUrls, audioErrors, requestAudio, play, stop, unlock })
-  const controls = viewerControls({ joinStatus, state, speaking, seenRecording, linesCount: lines.length })
+  // Closing the pause overlay once (KAN-84) holds for the rest of the
+  // visit: later pauses show the slim bar, not the blur again.
+  const [overlayDismissed, setOverlayDismissed] = useState(false)
+  const controls = viewerControls({
+    joinStatus,
+    state,
+    speaking,
+    seenRecording,
+    linesCount: lines.length,
+    overlayDismissed,
+  })
+  const notice = useRecordingNotice(state, seenRecording || lines.length > 0)
   const transcriptText = buildLiveTranscriptText(lines)
   const { unseen, jumpToLatest } = useStickToBottom(lines.length, controls.showSpeaking)
   // The line whose Play was tapped before its audio existed yet - played
@@ -132,10 +143,16 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
           <h1 className="min-w-0 flex-1 truncate text-base font-semibold tracking-tight">
             {title ?? 'Live session'}
           </h1>
-          <LivePill state={joinStatus === 'joined' ? state : null} notStarted={controls.overlay === 'not_started'} />
+          <LivePill
+            state={joinStatus === 'joined' ? state : null}
+            notStarted={controls.overlay === 'not_started' || controls.statusBar === 'not_started'}
+          />
           <ThemeToggle />
         </div>
+        {controls.statusBar !== 'none' && <WaitingBar kind={controls.statusBar} />}
       </header>
+
+      {notice && state === 'recording' && <RecordingToast key={notice.id} kind={notice.kind} />}
 
       <main className="mx-auto max-w-2xl px-4 pb-16 pt-4">
         {controls.showEndedNotice ? (
@@ -243,7 +260,9 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
             )}
           </div>
 
-          {controls.overlay !== 'none' && <WaitingOverlay kind={controls.overlay} />}
+          {controls.overlay !== 'none' && (
+            <WaitingOverlay kind={controls.overlay} onDismiss={() => setOverlayDismissed(true)} />
+          )}
         </section>
 
         {unseen > 0 && (
@@ -284,24 +303,86 @@ function LivePill({ state, notStarted }: { state: LiveState | null; notStarted: 
   )
 }
 
+const WAITING = {
+  paused: { Icon: CirclePause, title: 'Paused', detail: 'Waiting for the recording to resume…' },
+  not_started: { Icon: Hourglass, title: 'Not started yet', detail: 'Waiting for the recording to start…' },
+}
+
 // Blurs the transcript while the owner is paused, or hasn't started yet
 // (KAN-80) - so a still screen reads as "on purpose", not as broken. Only
-// the transcript: the language, Listen live and download stay usable.
-function WaitingOverlay({ kind }: { kind: 'not_started' | 'paused' }) {
-  const Icon = kind === 'paused' ? CirclePause : Hourglass
+// the transcript: the language, Listen live and download stay usable. It
+// can be closed (KAN-84) to read or play earlier lines during the pause.
+function WaitingOverlay({ kind, onDismiss }: { kind: 'not_started' | 'paused'; onDismiss: () => void }) {
+  const { Icon, title, detail } = WAITING[kind]
   return (
     <div className="absolute inset-0 z-10 flex items-start justify-center rounded-xl bg-canvas/60 pt-16 backdrop-blur-sm">
-      <div
-        role="status"
-        aria-live="polite"
-        className="mx-4 flex max-w-xs flex-col items-center rounded-2xl border border-line bg-surface px-6 py-5 text-center shadow-xl"
-      >
+      <div className="relative mx-4 flex max-w-xs flex-col items-center rounded-2xl border border-line bg-surface px-8 py-5 text-center shadow-xl">
+        <IconButton label="Hide this notice" onClick={onDismiss} className="absolute right-1 top-1">
+          <X className="h-4 w-4" aria-hidden />
+        </IconButton>
         <Icon className="mb-2 h-6 w-6 text-primary" aria-hidden />
-        <p className="font-medium">{kind === 'paused' ? 'Paused' : 'Not started yet'}</p>
-        <p className="mt-1 text-sm text-muted">
-          {kind === 'paused' ? 'Waiting for the recording to resume…' : 'Waiting for the recording to start…'}
-        </p>
+        <div role="status" aria-live="polite">
+          <p className="font-medium">{title}</p>
+          <p className="mt-1 text-sm text-muted">{detail}</p>
+        </div>
       </div>
+    </div>
+  )
+}
+
+// What the overlay becomes once closed: one line under the header, sticky
+// with it, so the wait stays visible without covering anything.
+function WaitingBar({ kind }: { kind: 'not_started' | 'paused' }) {
+  const { Icon, title, detail } = WAITING[kind]
+  return (
+    <div role="status" aria-live="polite" className="border-t border-line bg-subtle">
+      <p className="mx-auto flex max-w-2xl items-center gap-2 px-4 py-1.5 text-xs text-muted">
+        <Icon className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+        <span className="font-medium text-fg">{title}</span>
+        <span className="truncate">- {detail}</span>
+      </p>
+    </div>
+  )
+}
+
+const TOAST_MS = 4000
+
+// Watches for the owner pressing record again (KAN-84). Each notice gets
+// its own id, so a quick pause/resume restarts the toast instead of being
+// swallowed by the one still on screen.
+function useRecordingNotice(state: LiveState | null, recordedBefore: boolean) {
+  const [notice, setNotice] = useState<{ kind: RecordingNotice; id: number } | null>(null)
+  const previous = useRef({ state, recordedBefore })
+
+  useEffect(() => {
+    const kind = recordingNotice({
+      previous: previous.current.state,
+      next: state,
+      recordedBefore: previous.current.recordedBefore,
+    })
+    previous.current = { state, recordedBefore }
+    if (kind) setNotice({ kind, id: Date.now() })
+  }, [state, recordedBefore])
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = setTimeout(() => setNotice(null), TOAST_MS)
+    return () => clearTimeout(timer)
+  }, [notice])
+
+  return notice
+}
+
+function RecordingToast({ kind }: { kind: RecordingNotice }) {
+  return (
+    <div className="pointer-events-none fixed inset-x-0 top-20 z-30 flex justify-center px-4">
+      <p
+        role="status"
+        className="flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary shadow-lg motion-safe:animate-caption-in"
+      >
+        <Radio className="h-4 w-4" aria-hidden />
+        {kind === 'resumed' ? 'Recording resumed' : 'Recording started'}
+      </p>
     </div>
   )
 }
