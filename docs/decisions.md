@@ -536,6 +536,13 @@ Linear, Raycast, Granola, and Apple Live Captions for the viewer.
   break. `viewerControls()` uses `seenRecording`, or existing lines from a resumed session, to
   choose between the two messages. The blur covers only the transcript: the language, Listen live
   and download controls stay usable. No WebSocket contract change was needed.
+- **The pause overlay can be closed (KAN-84).** Found on a real phone: during a pause is exactly
+  when a viewer wants to replay an earlier line, and the blur sat on top of its Play button. Closing
+  it once holds for the rest of the visit: the wait becomes a slim bar inside the sticky header
+  (`viewerControls()`'s `statusBar`), and a "Recording resumed" toast (`role="status"`, about 4 s)
+  says when the owner presses record again. `recordingNotice()` only fires on a paused→recording
+  change the viewer sat through, so arriving mid-recording shows nothing. The dismissal is
+  component state, not `localStorage`: a reload, or a new session, starts with the overlay again.
 - **Every animation behind `motion-safe:`**, including the recording ping, the speaking dots, the
   login hero's waveform and the smooth auto-scroll.
 
