@@ -83,11 +83,14 @@ export function useLiveListen({ lines, audioUrls, audioErrors, requestAudio, pla
   // play() - none of them in a gesture - work on iOS.
   const start = useCallback(
     (fromIndex?: number) => {
+      // stop() before unlock(), never after: pausing right after would
+      // abort the silent unlock clip, and a phone strict about autoplay
+      // then refuses the first real play() - that line got skipped.
+      stop()
       unlock()
       stopAfterCurrentRef.current = false
       requestedRef.current.clear()
       lastQueuedRef.current = listenStartAfter(lines, fromIndex)
-      stop()
       setQueue([])
       setCurrentIndex(null)
       setListening(true)
