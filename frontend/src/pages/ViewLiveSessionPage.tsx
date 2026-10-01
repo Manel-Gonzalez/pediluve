@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowDown, CircleCheck, CirclePause, Download, Headphones, Hourglass, Radio, Unplug, X } from 'lucide-react'
+import {
+  ArrowDown,
+  CircleCheck,
+  CirclePause,
+  Download,
+  Headphones,
+  Hourglass,
+  ListMusic,
+  Radio,
+  Unplug,
+  X,
+} from 'lucide-react'
 import { AddToMySessions } from '../components/AddToMySessions'
 import { Button } from '../components/Button'
 import { IconButton } from '../components/IconButton'
@@ -64,6 +75,9 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
   // automatically once audio_ready arrives, so that first tap isn't just
   // a silent "fetch" that needs a second tap to actually hear anything.
   const [pendingPlayIndex, setPendingPlayIndex] = useState<number | null>(null)
+  // Whether the current listen began at a picked line (KAN-85) rather
+  // than at the next new one - only changes the hint under the controls.
+  const [listenFromLine, setListenFromLine] = useState(false)
 
   useEffect(() => {
     if (pendingPlayIndex === null) return
@@ -102,7 +116,14 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
       return
     }
     setPendingPlayIndex(null)
+    setListenFromLine(false)
     listen.start()
+  }
+
+  const handleListenFrom = (index: number) => {
+    setPendingPlayIndex(null)
+    setListenFromLine(true)
+    listen.start(index)
   }
 
   const handleDownload = () => {
@@ -214,7 +235,11 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
           </div>
         )}
         {listen.listening && (
-          <p className="-mt-2 mb-4 text-xs text-muted">Reading each new line aloud as it arrives.</p>
+          <p className="-mt-2 mb-4 text-xs text-muted">
+            {listenFromLine
+              ? 'Reading from the line you picked, then each new line as it arrives.'
+              : 'Reading each new line aloud as it arrives.'}
+          </p>
         )}
 
         <section aria-label="Live translation" className="relative min-h-[50vh]">
@@ -239,16 +264,25 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
                       on, lines play themselves in order, and a manual tap
                       would cut into that queue. */}
                   {showPlay && (
-                    <PlayButton
-                      index={line.index}
-                      audioUrl={audioUrls[line.index] ?? null}
-                      loading={audioLoading[line.index] ?? false}
-                      error={audioErrors[line.index] ?? null}
-                      onRequestAudio={handleRequestAudio}
-                      playingUrl={playingUrl}
-                      play={play}
-                      stop={stop}
-                    />
+                    <div className="flex shrink-0 items-center">
+                      <PlayButton
+                        index={line.index}
+                        audioUrl={audioUrls[line.index] ?? null}
+                        loading={audioLoading[line.index] ?? false}
+                        error={audioErrors[line.index] ?? null}
+                        onRequestAudio={handleRequestAudio}
+                        playingUrl={playingUrl}
+                        play={play}
+                        stop={stop}
+                      />
+                      {/* KAN-85: this line, every one after it, then on live
+                          - "from the start" is this button on line one. */}
+                      {controls.listenAvailable && (
+                        <IconButton label="Listen from here" onClick={() => handleListenFrom(line.index)}>
+                          <ListMusic className="h-4 w-4" aria-hidden />
+                        </IconButton>
+                      )}
+                    </div>
                   )}
                 </article>
               )
