@@ -447,8 +447,9 @@ couldn't, plus a few UX changes. Recorded here because each one changed a design
   translated on demand as in Phase 4), not the owner's.
 - **"Listen live" reads new lines aloud as they arrive** (`hooks/useLiveListen.ts`). It starts from
   the next line, not the backlog: reading everything said so far would leave the listener
-  permanently behind. Each line's audio is requested as soon as it's queued, so the next one is
-  generated while the current one plays. Per-line Play buttons are hidden while it's on, so a
+  permanently behind (KAN-85's "Listen from here" is the opt-in exception, below). Audio is
+  requested a little ahead of each line's turn, so the next one is generated while the current one
+  plays. Per-line Play buttons are hidden while it's on, so a
   manual tap can't cut into the queue. Playback goes through one reused `<audio>` element,
   unlocked with a silent clip inside the tap that starts it, because iOS Safari blocks `play()`
   calls that don't come from a user gesture.
@@ -543,6 +544,18 @@ Linear, Raycast, Granola, and Apple Live Captions for the viewer.
   says when the owner presses record again. `recordingNotice()` only fires on a paused→recording
   change the viewer sat through, so arriving mid-recording shows nothing. The dismissal is
   component state, not `localStorage`: a reload, or a new session, starts with the overlay again.
+- **"Listen from here" (KAN-85).** A second button per line starts the Listen live queue at that
+  line instead of at the next new one: it and every line after it play in order, then new lines
+  carry on live. "From the start" is that button on the first line, so it's one control, not two.
+  The rejected alternative was a separate "play transcript" player alongside Listen live: two
+  queues sharing one `<audio>` element would have to coordinate, for no gain. Starting early
+  while the owner records leaves the listener behind live by about the backlog's reading time;
+  that's the listener's choice, and Listen live goes back to live.
+- **Audio is prefetched two lines ahead, not the whole queue (KAN-85).** Listen live used to request
+  every queued line's audio at once. That was fine for one or two new lines, but a catch-up from
+  line one of a long session would fire dozens of ElevenLabs calls together. That would spend
+  credits on lines the listener may never reach and could hit the plan's concurrency limit.
+  `audioToRequest()` asks only for the line playing plus the next two; cached lines cost nothing.
 - **Every animation behind `motion-safe:`**, including the recording ping, the speaking dots, the
   login hero's waveform and the smooth auto-scroll.
 

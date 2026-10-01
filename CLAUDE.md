@@ -268,6 +268,10 @@ KAN-84 — the viewer's pause overlay can be closed (a slim status bar replaces 
 the visit, so earlier lines can be played during a pause), plus a "Recording resumed" toast. On
 `feature/KAN-84`. Frontend tests (`vitest`, 145) passing.
 
+KAN-85 — "Listen from here" on each viewer line: plays from that line to the latest, then carries
+on live; audio prefetched two lines ahead instead of the whole queue. On `feature/KAN-85` (branched
+from `feature/KAN-84`). Frontend tests (`vitest`, 151) passing.
+
 Next: record the README demo GIF and screenshots. KAN-71 (owner-reload grace period) is the one
 parked follow-up. Phase 6 stays parked - start with its spike (see Phase gates) only if a real
 multi-mic use case shows up.

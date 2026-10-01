@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildLiveTranscriptText, newLinesToRead } from './liveTranscript'
+import { audioToRequest, buildLiveTranscriptText, listenStartAfter, newLinesToRead } from './liveTranscript'
 import type { LiveLineData } from './types'
 
 function line(overrides: Partial<LiveLineData> = {}): LiveLineData {
@@ -50,5 +50,38 @@ describe('newLinesToRead', () => {
 
   it('handles an empty list', () => {
     expect(newLinesToRead([], 3)).toEqual({ indexes: [], lastIndex: 3 })
+  })
+})
+
+describe('listenStartAfter', () => {
+  const lines = [line({ index: 0 }), line({ index: 1 }), line({ index: 2 })]
+
+  it('starts after the latest line for plain Listen live', () => {
+    // Only lines that arrive after pressing it get read.
+    expect(listenStartAfter(lines)).toBe(2)
+    expect(listenStartAfter([])).toBe(-1)
+  })
+
+  it('starts at the chosen line for Listen from here', () => {
+    expect(newLinesToRead(lines, listenStartAfter(lines, 1)).indexes).toEqual([1, 2])
+    expect(newLinesToRead(lines, listenStartAfter(lines, 0)).indexes).toEqual([0, 1, 2])
+  })
+})
+
+describe('audioToRequest', () => {
+  it('asks for the line playing plus the next two queued, not the whole backlog', () => {
+    expect(audioToRequest({ current: 3, queue: [4, 5, 6, 7], known: new Set() })).toEqual([3, 4, 5])
+  })
+
+  it('looks ahead in the queue while nothing is playing yet', () => {
+    expect(audioToRequest({ current: null, queue: [0, 1, 2, 3], known: new Set() })).toEqual([0, 1])
+  })
+
+  it('skips lines already requested or already holding audio', () => {
+    expect(audioToRequest({ current: 3, queue: [4, 5], known: new Set([3, 4]) })).toEqual([5])
+  })
+
+  it('asks for nothing when idle', () => {
+    expect(audioToRequest({ current: null, queue: [], known: new Set() })).toEqual([])
   })
 })

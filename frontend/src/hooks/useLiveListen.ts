@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { newLinesToRead } from '../lib/liveTranscript'
+import { audioToRequest, listenStartAfter, newLinesToRead } from '../lib/liveTranscript'
 import type { LiveLineData } from '../lib/types'
 
 type Options = {
@@ -15,8 +15,10 @@ type Options = {
 // "Listen live" on the anonymous viewer page: once started, every line
 // that arrives *after* that moment is spoken in order, one at a time -
 // request_audio, wait for audio_ready, play, then the next. Starting from
-// the next line rather than the backlog is deliberate: reading out
-// everything said so far would leave the listener permanently behind.
+// the next line rather than the backlog is the default: reading out
+// everything said so far would leave the listener behind live. "Listen
+// from here" (KAN-85) is the opt-in exception - start(index) reads from
+// that line on, then carries on live the same way.
 export function useLiveListen({ lines, audioUrls, audioErrors, requestAudio, play, stop, unlock }: Options) {
   const [listening, setListening] = useState(false)
   const [queue, setQueue] = useState<number[]>([])
@@ -28,19 +30,29 @@ export function useLiveListen({ lines, audioUrls, audioErrors, requestAudio, pla
   const startedRef = useRef(false)
   // Set by finishAndStop: switch off once the line playing now is done.
   const stopAfterCurrentRef = useRef(false)
+  // Lines whose audio this listen already asked for - requestAudio itself
+  // doesn't dedupe, and each request can be a paid TTS call.
+  const requestedRef = useRef(new Set<number>())
 
   useEffect(() => {
     if (!listening) return
     const { indexes, lastIndex } = newLinesToRead(lines, lastQueuedRef.current)
     lastQueuedRef.current = lastIndex
     if (!indexes.length) return
-    // Requested as soon as queued, not when its turn comes: the next
-    // line's audio is generated while the current one is still playing,
-    // instead of a 1-2s silence between lines. Same cost either way -
-    // every queued line gets spoken.
-    indexes.forEach((index) => requestAudio(index))
     setQueue((prev) => [...prev, ...indexes])
-  }, [listening, lines, requestAudio])
+  }, [listening, lines])
+
+  // Audio is requested a couple of lines ahead of its turn, so the next
+  // line is ready while the current one still plays (no 1-2s silence in
+  // between) - but only a couple: see audioToRequest.
+  useEffect(() => {
+    if (!listening) return
+    const known = new Set([...requestedRef.current, ...Object.keys(audioUrls).map(Number)])
+    for (const index of audioToRequest({ current: currentIndex, queue, known })) {
+      requestedRef.current.add(index)
+      requestAudio(index)
+    }
+  }, [listening, currentIndex, queue, audioUrls, requestAudio])
 
   useEffect(() => {
     if (listening && currentIndex === null && stopAfterCurrentRef.current) {
@@ -69,14 +81,19 @@ export function useLiveListen({ lines, audioUrls, audioErrors, requestAudio, pla
 
   // Must run inside the tap itself: unlock() is what lets every later
   // play() - none of them in a gesture - work on iOS.
-  const start = useCallback(() => {
-    unlock()
-    stopAfterCurrentRef.current = false
-    lastQueuedRef.current = lines.reduce((max, line) => Math.max(max, line.index), -1)
-    setQueue([])
-    setCurrentIndex(null)
-    setListening(true)
-  }, [lines, unlock])
+  const start = useCallback(
+    (fromIndex?: number) => {
+      unlock()
+      stopAfterCurrentRef.current = false
+      requestedRef.current.clear()
+      lastQueuedRef.current = listenStartAfter(lines, fromIndex)
+      stop()
+      setQueue([])
+      setCurrentIndex(null)
+      setListening(true)
+    },
+    [lines, unlock, stop],
+  )
 
   const stopListening = useCallback(() => {
     setListening(false)
@@ -88,6 +105,7 @@ export function useLiveListen({ lines, audioUrls, audioErrors, requestAudio, pla
   // A language switch: whatever was queued (or playing) is in the old
   // language, so drop it and carry on from the next new line.
   const resetQueue = useCallback(() => {
+    requestedRef.current.clear()
     setQueue([])
     setCurrentIndex(null)
     stop()
