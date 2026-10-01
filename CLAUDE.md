@@ -61,13 +61,15 @@ pediluve/
 │   ├── routers/           ← ws.py (owner: join_session/pause-resume, publishes into its
 │   │                        live room), viewer_ws.py (anonymous /ws/view, KAN-50), me.py
 │   │                        (GET /me), sessions.py (REST CRUD, on-demand translate,
-│   │                        guest add/remove, transcript download)
+│   │                        guest add/remove, transcript download), live_audio.py
+│   │                        (GET /api/live-audio/{token}, fresh TTS clips, KAN-87)
 │   ├── services/
 │   │   ├── elevenlabs.py  ← realtime STT session + synthesize() (TTS)
 │   │   ├── deepl.py       ← translate() + translate_many() (batched re-translation)
 │   │   ├── live_rooms.py  ← in-memory LiveRoom/LiveRoomRegistry fan-out for /ws/view (KAN-50)
 │   │   ├── storage.py     ← Supabase Storage for cached TTS audio
 │   │   ├── tts_cache.py   ← message_audio cache lookup/synthesize/upload orchestration
+│   │   ├── live_audio.py  ← in-memory store for freshly synthesized clips (KAN-87)
 │   │   ├── supabase.py
 │   │   └── auth.py        ← verify_access_token (Supabase Auth)
 │   ├── models/            ← Pydantic schemas (messages.py, viewer.py, sessions.py, auth.py)
@@ -275,6 +277,12 @@ from `feature/KAN-84`). Frontend tests (`vitest`, 151) passing.
 KAN-86 — viewer "jump to latest" arrow whenever scrolled up (a count once lines arrive), and the
 listening controls moved into the sticky header so they stay reachable on a phone. On
 `feature/KAN-86` (branched from `feature/KAN-85`). Frontend tests (`vitest`, 154) passing.
+Also on that branch: concurrent audio requests for one line share a single TTS generation.
+
+KAN-87 — a fresh TTS clip goes to the listener as soon as ElevenLabs returns it, served from
+memory by `GET /api/live-audio/{token}`; the Storage upload and `message_audio` row follow in the
+background. WebSocket contract unchanged. On `feature/KAN-87` (branched from `feature/KAN-86`).
+Backend tests (`pytest`, 291) passing.
 
 Next: record the README demo GIF and screenshots. KAN-71 (owner-reload grace period) is the one
 parked follow-up. Phase 6 stays parked - start with its spike (see Phase gates) only if a real
