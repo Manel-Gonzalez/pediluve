@@ -567,6 +567,16 @@ Linear, Raycast, Granola, and Apple Live Captions for the viewer.
   these are the page's only actions. Below 380px "Save" goes icon-only, so the language picker
   keeps its room. When the session ends, the row goes and the ended notice takes its place, in
   the page as before.
+- **The audio unlock must play out (KAN-86 fix).** On a phone, Listen live skipped its first line.
+  KAN-85's `start()` called `stop()` right after `unlock()`, which aborted the silent unlock
+  clip, so the first real `play()` could be refused. `stop()` now runs first. The shared
+  `<audio>` element also ignores an `ended` event unless `audio.ended` is true. A late one from a
+  replaced track (the unlock clip, as the first line starts) would otherwise count as that line
+  finishing.
+- **The pause card is centred on the screen, not the transcript.** It sat at the top of the
+  blurred transcript, off-screen once a phone had scrolled down. It's now `fixed` and centred,
+  as a sibling of the blur rather than inside it, because `backdrop-filter` would make the blur
+  its containing block.
 - **Every animation behind `motion-safe:`**, including the recording ping, the speaking dots, the
   login hero's waveform and the smooth auto-scroll.
 
