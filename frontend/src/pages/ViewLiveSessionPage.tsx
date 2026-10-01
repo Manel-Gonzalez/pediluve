@@ -1,29 +1,30 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { ArrowDown, CircleCheck, CirclePause, Download, Headphones, Hourglass, Unplug } from 'lucide-react'
 import { AddToMySessions } from '../components/AddToMySessions'
-import { LanguageBadge } from '../components/TranscriptRow'
+import { Button } from '../components/Button'
+import { IconButton } from '../components/IconButton'
+import { LogoMark } from '../components/LogoMark'
 import { PlayButton } from '../components/PlayButton'
+import { ThemeToggle } from '../components/ThemeToggle'
 import { useAudioPlayer } from '../hooks/useAudioPlayer'
 import { useLiveListen } from '../hooks/useLiveListen'
 import { useLiveViewer } from '../hooks/useLiveViewer'
-import { SUPPORTED_LANGUAGES } from '../lib/languageControls'
+import { useStickToBottom } from '../hooks/useStickToBottom'
 import { saveBlob, transcriptFilename } from '../lib/download'
+import { SUPPORTED_LANGUAGES } from '../lib/languageControls'
+import { languageName } from '../lib/languageLabel'
 import { buildLiveTranscriptText } from '../lib/liveTranscript'
+import type { LiveState } from '../lib/types'
+import { viewerControls } from '../lib/viewerState'
 
 // Anonymous, read-only counterpart to LiveSessionPage (KAN-50) - reached by
 // a QR code/share link, no Supabase session involved at all (see App.tsx:
-// this route lives outside RequireAuth).
+// this route lives outside RequireAuth). Built for phones first (KAN-80).
 export function ViewLiveSessionPage() {
   const { shareToken } = useParams<{ shareToken: string }>()
   if (!shareToken) return null
   return <ViewLiveSessionPageContent key={shareToken} shareToken={shareToken} />
-}
-
-function describeState(state: string | null): string {
-  if (state === 'recording') return 'Recording'
-  if (state === 'paused') return 'Paused'
-  if (state === 'ended') return 'Session ended'
-  return 'Connecting…'
 }
 
 function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
@@ -32,6 +33,7 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
     title,
     state,
     speaking,
+    seenRecording,
     lines,
     targetLanguage,
     setTargetLanguage,
@@ -44,7 +46,9 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
   // playback must stop line A's, not play both at once.
   const { playingUrl, play, stop, unlock } = useAudioPlayer()
   const listen = useLiveListen({ lines, audioUrls, audioErrors, requestAudio, play, stop, unlock })
+  const controls = viewerControls({ joinStatus, state, speaking, seenRecording, linesCount: lines.length })
   const transcriptText = buildLiveTranscriptText(lines)
+  const { unseen, jumpToLatest } = useStickToBottom(lines.length, controls.showSpeaking)
   // The line whose Play was tapped before its audio existed yet - played
   // automatically once audio_ready arrives, so that first tap isn't just
   // a silent "fetch" that needs a second tap to actually hear anything.
@@ -60,6 +64,12 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
       setPendingPlayIndex(null)
     }
   }, [pendingPlayIndex, audioUrls, audioErrors, play])
+
+  // The session ended: "Listen live" finishes the line it's on, then stops.
+  const { listening, finishAndStop } = listen
+  useEffect(() => {
+    if (controls.showEndedNotice && listening) finishAndStop()
+  }, [controls.showEndedNotice, listening, finishAndStop])
 
   const handleRequestAudio = (index: number) => {
     // Inside the tap - lets the later auto-play (after audio_ready, not
@@ -91,112 +101,206 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
 
   if (joinStatus === 'not_found') {
     return (
-      <div className="mx-auto max-w-2xl px-4 py-8">
-        <p>This live session isn't available - it may have ended, or the link may be wrong.</p>
-        <Link to="/" className="text-accent-500 hover:text-accent-600">
-          Go home
+      <div className="flex min-h-screen flex-col items-center justify-center px-6 text-center">
+        <ThemeToggle className="absolute right-4 top-4" />
+        <span className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-full bg-subtle text-muted">
+          <Unplug className="h-6 w-6" aria-hidden />
+        </span>
+        <h1 className="text-xl font-semibold tracking-tight">This session isn't live</h1>
+        <p className="mt-2 max-w-sm text-sm text-muted">
+          It may have ended, or the link may be wrong. If you added it to your sessions, you'll find the full
+          transcript there.
+        </p>
+        <Link to="/" className="mt-6 text-sm font-medium text-primary hover:text-primary-hover">
+          Go to my sessions
         </Link>
       </div>
     )
   }
 
-  const isRecording = state === 'recording'
+  const downloadButton = (
+    <IconButton label="Download translation" onClick={handleDownload} disabled={!transcriptText}>
+      <Download className="h-5 w-5" aria-hidden />
+    </IconButton>
+  )
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-8">
-      <h1 className="text-2xl font-semibold text-ink-900">{title ?? 'Live session'}</h1>
-      <p className="mt-1 flex items-center gap-2 text-sm text-ink-500">
-        {describeState(state)}
-        {isRecording && (
-          <span className="relative flex h-3 w-3" aria-label="Recording" role="status">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent-400 opacity-75" />
-            <span className="relative inline-flex h-3 w-3 rounded-full bg-accent-500" />
-          </span>
-        )}
-      </p>
-
-      {joinStatus === 'joined' && (
-        <div className="my-4">
-          <AddToMySessions shareToken={shareToken} targetLanguage={targetLanguage} />
+    <div className="min-h-screen">
+      <header className="sticky top-0 z-20 border-b border-line bg-canvas/80 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-2xl items-center gap-3 px-4">
+          <LogoMark className="h-7 w-7 shrink-0" />
+          <h1 className="min-w-0 flex-1 truncate text-base font-semibold tracking-tight">
+            {title ?? 'Live session'}
+          </h1>
+          <LivePill state={joinStatus === 'joined' ? state : null} notStarted={controls.overlay === 'not_started'} />
+          <ThemeToggle />
         </div>
-      )}
+      </header>
 
-      <div className="my-4 flex flex-wrap items-end gap-4">
-        <button
-          onClick={handleToggleListen}
-          disabled={joinStatus !== 'joined'}
-          aria-pressed={listen.listening}
-          className={`rounded px-3 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
-            listen.listening
-              ? 'bg-accent-500 text-white hover:bg-accent-600'
-              : 'border border-accent-500 text-accent-600 hover:bg-accent-50'
-          }`}
-        >
-          {listen.listening ? 'Stop listening' : 'Listen live'}
-        </button>
-        <label className="flex w-fit flex-col gap-1 text-sm text-ink-900">
-          Your language
-          <select
-            value={targetLanguage}
-            disabled={joinStatus !== 'joined'}
-            onChange={(event) => handleLanguageChange(event.target.value)}
-            className="rounded border border-ink-200 px-2 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {SUPPORTED_LANGUAGES.map((code) => (
-              <option key={code} value={code}>
-                {code}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          onClick={handleDownload}
-          disabled={!transcriptText}
-          className="rounded border border-ink-200 px-3 py-1.5 text-sm font-medium text-ink-900 hover:border-ink-300 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Download translation
-        </button>
-      </div>
-      {listen.listening && (
-        <p className="-mt-2 mb-4 text-xs text-ink-500">
-          Reading each new line aloud as it arrives.
-        </p>
-      )}
+      <main className="mx-auto max-w-2xl px-4 pb-16 pt-4">
+        {controls.showEndedNotice ? (
+          <section className="mb-6 rounded-xl border border-line bg-surface p-5">
+            <div className="flex items-start gap-3">
+              <CircleCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden />
+              <div className="flex-1">
+                <h2 className="font-semibold tracking-tight">This session has ended</h2>
+                <p className="mt-1 text-sm text-muted">Thanks for following along. Keep a copy before you go:</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={handleDownload}
+                    disabled={!transcriptText}
+                    icon={<Download className="h-4 w-4" aria-hidden />}
+                  >
+                    Download translation
+                  </Button>
+                  <AddToMySessions shareToken={shareToken} targetLanguage={targetLanguage} />
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : (
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant={listen.listening ? 'primary' : 'secondary'}
+              onClick={handleToggleListen}
+              disabled={!controls.listenAvailable}
+              aria-pressed={listen.listening}
+              icon={<Headphones className="h-4 w-4" aria-hidden />}
+            >
+              {listen.listening ? 'Stop listening' : 'Listen live'}
+            </Button>
+            <label className="sr-only" htmlFor="viewer-language">
+              Your language
+            </label>
+            <select
+              id="viewer-language"
+              value={targetLanguage}
+              disabled={controls.languageLocked}
+              onChange={(event) => handleLanguageChange(event.target.value)}
+              className="h-8 rounded-lg border border-line px-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {SUPPORTED_LANGUAGES.map((code) => (
+                <option key={code} value={code}>
+                  {languageName(code)}
+                </option>
+              ))}
+            </select>
+            <div className="ml-auto flex items-center gap-1">
+              {joinStatus === 'joined' && (
+                <AddToMySessions shareToken={shareToken} targetLanguage={targetLanguage} compact />
+              )}
+              {downloadButton}
+            </div>
+          </div>
+        )}
+        {listen.listening && (
+          <p className="-mt-2 mb-4 text-xs text-muted">Reading each new line aloud as it arrives.</p>
+        )}
 
-      <div className="my-4 flex flex-col gap-3">
-        {lines.map((line) => (
-          <div
-            key={line.index}
-            className={`flex flex-col gap-1.5 rounded-lg border p-3 ${
-              listen.currentIndex === line.index ? 'border-accent-400 bg-accent-50' : 'border-ink-200'
-            }`}
-          >
-            <LanguageBadge>{targetLanguage}</LanguageBadge>
-            <p className={`text-sm ${line.translated_text ? 'text-ink-900' : 'italic text-ink-500'}`}>
-              {line.translated_text ?? 'Translating…'}
-            </p>
-            {/* Per-line Play only while "Listen live" is off - with it on,
-                lines play themselves in order, and a manual tap would
-                cut into that queue. */}
-            {!listen.listening && line.translated_text && (
-              <PlayButton
-                index={line.index}
-                audioUrl={audioUrls[line.index] ?? null}
-                loading={audioLoading[line.index] ?? false}
-                error={audioErrors[line.index] ?? null}
-                onRequestAudio={handleRequestAudio}
-                playingUrl={playingUrl}
-                play={play}
-                stop={stop}
-              />
+        <section aria-label="Live translation" className="relative min-h-[50vh]">
+          <div className="flex flex-col gap-3">
+            {lines.map((line) => {
+              const cached = audioUrls[line.index] !== undefined
+              const showPlay =
+                !listen.listening && !!line.translated_text && (controls.perLinePlay === 'all' || cached)
+              return (
+                <article
+                  key={line.index}
+                  className={`flex items-start gap-2 rounded-xl border px-4 py-3 transition-colors ${
+                    listen.currentIndex === line.index ? 'border-primary bg-highlight' : 'border-line bg-surface'
+                  }`}
+                >
+                  <p
+                    className={`flex-1 text-lg leading-relaxed ${line.translated_text ? 'text-fg' : 'italic text-muted'}`}
+                  >
+                    {line.translated_text ?? 'Translating…'}
+                  </p>
+                  {/* Per-line Play only while "Listen live" is off - with it
+                      on, lines play themselves in order, and a manual tap
+                      would cut into that queue. */}
+                  {showPlay && (
+                    <PlayButton
+                      index={line.index}
+                      audioUrl={audioUrls[line.index] ?? null}
+                      loading={audioLoading[line.index] ?? false}
+                      error={audioErrors[line.index] ?? null}
+                      onRequestAudio={handleRequestAudio}
+                      playingUrl={playingUrl}
+                      play={play}
+                      stop={stop}
+                    />
+                  )}
+                </article>
+              )
+            })}
+            {controls.showSpeaking && <SpeakingBubble />}
+            {joinStatus === 'joining' && <p className="text-sm text-muted">Connecting…</p>}
+            {joinStatus === 'joined' && state === 'recording' && lines.length === 0 && !speaking && (
+              <p className="text-sm text-muted">Nothing said yet.</p>
             )}
           </div>
-        ))}
-        {isRecording && speaking && <SpeakingBubble />}
-        {joinStatus === 'joining' && <p className="text-sm text-ink-500">Connecting…</p>}
-        {joinStatus === 'joined' && lines.length === 0 && !speaking && (
-          <p className="text-sm text-ink-500">Nothing said yet.</p>
+
+          {controls.overlay !== 'none' && <WaitingOverlay kind={controls.overlay} />}
+        </section>
+
+        {unseen > 0 && (
+          <div className="pointer-events-none fixed inset-x-0 bottom-6 z-20 flex justify-center">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={jumpToLatest}
+              icon={<ArrowDown className="h-4 w-4" aria-hidden />}
+              className="pointer-events-auto rounded-full shadow-lg"
+            >
+              {unseen} new line{unseen === 1 ? '' : 's'}
+            </Button>
+          </div>
         )}
+      </main>
+    </div>
+  )
+}
+
+function LivePill({ state, notStarted }: { state: LiveState | null; notStarted: boolean }) {
+  if (state === 'recording') {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-highlight px-2.5 py-1 text-xs font-medium text-highlight-fg">
+        <span className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full rounded-full bg-accent-400 opacity-75 motion-safe:animate-ping" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+        </span>
+        Live
+      </span>
+    )
+  }
+  const label = notStarted ? 'Waiting' : state === 'paused' ? 'Paused' : state === 'ended' ? 'Ended' : 'Connecting'
+  return (
+    <span className="inline-flex shrink-0 items-center rounded-full bg-subtle px-2.5 py-1 text-xs font-medium text-muted">
+      {label}
+    </span>
+  )
+}
+
+// Blurs the transcript while the owner is paused, or hasn't started yet
+// (KAN-80) - so a still screen reads as "on purpose", not as broken. Only
+// the transcript: the language, Listen live and download stay usable.
+function WaitingOverlay({ kind }: { kind: 'not_started' | 'paused' }) {
+  const Icon = kind === 'paused' ? CirclePause : Hourglass
+  return (
+    <div className="absolute inset-0 z-10 flex items-start justify-center rounded-xl bg-canvas/60 pt-16 backdrop-blur-sm">
+      <div
+        role="status"
+        aria-live="polite"
+        className="mx-4 flex max-w-xs flex-col items-center rounded-2xl border border-line bg-surface px-6 py-5 text-center shadow-xl"
+      >
+        <Icon className="mb-2 h-6 w-6 text-primary" aria-hidden />
+        <p className="font-medium">{kind === 'paused' ? 'Paused' : 'Not started yet'}</p>
+        <p className="mt-1 text-sm text-muted">
+          {kind === 'paused' ? 'Waiting for the recording to resume…' : 'Waiting for the recording to start…'}
+        </p>
       </div>
     </div>
   )
@@ -210,12 +314,12 @@ function SpeakingBubble() {
     <div
       role="status"
       aria-label="The speaker is talking"
-      className="flex w-fit items-center gap-1 rounded-lg border border-ink-200 px-4 py-3"
+      className="flex w-fit items-center gap-1 rounded-xl border border-line bg-surface px-4 py-3"
     >
       {[0, 150, 300].map((delay) => (
         <span
           key={delay}
-          className="h-2 w-2 animate-bounce rounded-full bg-accent-400"
+          className="h-2 w-2 rounded-full bg-accent-400 motion-safe:animate-bounce"
           style={{ animationDelay: `${delay}ms` }}
         />
       ))}

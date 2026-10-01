@@ -45,6 +45,8 @@ class SessionSummary(BaseModel):
 class SessionListResponse(BaseModel):
     items: list[SessionSummary]
     has_more: bool
+    # Every session the caller can see, across all pages (KAN-75).
+    total: int
 
 
 class MessageRecord(BaseModel):

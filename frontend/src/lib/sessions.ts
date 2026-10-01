@@ -29,13 +29,11 @@ export function formatSessionTitle(session: SessionSummary): string {
   return `Untitled - ${new Date(session.created_at).toLocaleDateString()}`
 }
 
-// "Load more" appends a page rather than replacing the list - the rows
-// already on screen must stay while a further page loads.
-export function appendSessions(
-  existing: SessionSummary[],
-  loaded: SessionSummary[],
-): SessionSummary[] {
-  return [...existing, ...loaded]
+// The ConfirmDialog body for deleting a session (KAN-77).
+export function deleteConfirmationText(session: SessionSummary): string {
+  const count = session.message_count
+  const messages = count > 0 ? ` and its ${count} message${count === 1 ? '' : 's'}` : ''
+  return `"${formatSessionTitle(session)}"${messages} will be deleted for good. This can't be undone.`
 }
 
 // Rename-in-place (KAN-39): a successful PATCH updates just the one row's

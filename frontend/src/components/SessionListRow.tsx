@@ -1,11 +1,20 @@
-import { useState, type KeyboardEvent } from 'react'
+import { useState, type KeyboardEvent, type MouseEvent } from 'react'
+import { Check, Pencil, Trash2, UserMinus, X } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { Link } from 'react-router-dom'
 import { ApiError, deleteSession, removeGuestSession, renameSession } from '../lib/api'
 import { sessionPath } from '../lib/routes'
 import { validateSessionTitle } from '../lib/sessionTitle'
-import { formatSessionTitle } from '../lib/sessions'
+import { relativeTime } from '../lib/relativeTime'
+import { deleteConfirmationText, formatSessionTitle } from '../lib/sessions'
 import type { SessionSummary } from '../lib/types'
+import { ConfirmDialog } from './ConfirmDialog'
+import { IconButton } from './IconButton'
+
+// Keeps the input focused when its own check/x buttons are pressed - blur
+// cancels the edit (see onBlur below), and on a phone it would fire before
+// the tap on the check lands.
+const keepFocus = (event: MouseEvent) => event.preventDefault()
 
 type SessionListRowProps = {
   session: Session
@@ -20,6 +29,7 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
   const [draftTitle, setDraftTitle] = useState(item.title ?? '')
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  const [confirming, setConfirming] = useState<'delete' | 'remove' | null>(null)
 
   const startEditing = () => {
     setDraftTitle(item.title ?? '')
@@ -66,23 +76,18 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
     }
   }
 
+  // Both run inside ConfirmDialog: a thrown error keeps it open and shows
+  // the message there. A 404 means it's already gone - drop the row.
   const handleDelete = async () => {
-    const confirmed = window.confirm(
-      `Delete "${formatSessionTitle(item)}" and its ${item.message_count} message${
-        item.message_count === 1 ? '' : 's'
-      }?`,
-    )
-    if (!confirmed) return
-
     try {
       await deleteSession(session, item.id)
       onDeleted(item.id)
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         onMissing(item.id)
+        return
       }
-      // Any other failure leaves the row in place - Delete stays clickable
-      // to retry, no extra error UI needed for this rare path.
+      throw err
     }
   }
 
@@ -91,86 +96,107 @@ export function SessionListRow({ session, item, onRenamed, onDeleted, onMissing 
   // session_guests row - the session itself, and everyone else's access to
   // it, is untouched.
   const handleRemoveGuestSession = async () => {
-    const confirmed = window.confirm(`Remove "${formatSessionTitle(item)}" from your sessions?`)
-    if (!confirmed) return
-
     try {
       await removeGuestSession(session, item.id)
       onDeleted(item.id)
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         onMissing(item.id)
+        return
       }
+      throw err
     }
   }
 
   return (
-    <li className="flex items-center justify-between gap-4 rounded-lg border border-ink-200 p-4 transition-shadow hover:shadow-md hover:border-accent-200">
+    <li className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-subtle/60">
       {isEditing ? (
-        <div className="flex flex-col gap-1 flex-1">
-          <input
-            autoFocus
-            maxLength={120}
-            value={draftTitle}
-            disabled={pending}
-            onChange={(event) => setDraftTitle(event.target.value)}
-            onKeyDown={handleKeyDown}
-            // A click away from the input cancels rather than saves -
-            // Enter is the only way to commit, so an accidental blur can't
-            // silently rename the session.
-            onBlur={() => !pending && cancelEditing()}
-            className="px-2 py-1 text-base border border-ink-200 rounded-md"
-          />
-          {error && <span className="text-sm text-red-600">{error}</span>}
+        <div className="flex flex-1 flex-col gap-1">
+          <div className="flex items-center gap-1">
+            <input
+              autoFocus
+              maxLength={120}
+              value={draftTitle}
+              disabled={pending}
+              onChange={(event) => setDraftTitle(event.target.value)}
+              onKeyDown={handleKeyDown}
+              // A click away from the input cancels rather than saves -
+              // Enter is the only way to commit, so an accidental blur can't
+              // silently rename the session.
+              onBlur={() => !pending && cancelEditing()}
+              aria-label="Session title"
+              className="min-w-0 flex-1 rounded-lg border border-line px-2 py-1 text-base focus:border-primary focus:outline-none"
+            />
+            <IconButton label="Save title" onMouseDown={keepFocus} onClick={saveRename} disabled={pending}>
+              <Check className="h-4 w-4" aria-hidden />
+            </IconButton>
+            <IconButton label="Cancel rename" onMouseDown={keepFocus} onClick={cancelEditing} disabled={pending}>
+              <X className="h-4 w-4" aria-hidden />
+            </IconButton>
+          </div>
+          {error && <span className="text-sm text-danger">{error}</span>}
         </div>
       ) : (
-        <Link to={sessionPath(item.id)} className="flex flex-col gap-1 text-inherit no-underline">
-          <span className="flex items-center gap-2 font-semibold text-ink-900">
-            {formatSessionTitle(item)}
+        <Link to={sessionPath(item.id)} className="flex min-w-0 flex-1 flex-col gap-1 rounded-md text-inherit no-underline">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate font-medium text-fg">{formatSessionTitle(item)}</span>
             {item.role === 'guest' && (
-              <span className="inline-block rounded bg-accent-50 px-1.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-accent-700">
+              <span className="shrink-0 rounded-full bg-highlight px-2 py-0.5 text-xs font-medium text-highlight-fg">
                 Guest
               </span>
             )}
           </span>
-          <span className="text-sm text-ink-500">
-            {new Date(item.created_at).toLocaleString()}
-            {' · '}
-            {item.source_language ?? '?'} → {item.target_language ?? '?'}
-            {' · '}
-            {item.message_count} message{item.message_count === 1 ? '' : 's'}
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+            <time dateTime={item.created_at} title={new Date(item.created_at).toLocaleString()}>
+              {relativeTime(item.created_at)}
+            </time>
+            <span aria-hidden className="hidden sm:inline">·</span>
+            <span className="rounded border border-line px-1.5 text-xs font-medium uppercase tracking-wide">
+              {item.source_language ?? 'auto'} → {item.target_language ?? '?'}
+            </span>
+            <span aria-hidden className="hidden sm:inline">·</span>
+            <span className="tabular-nums">
+              {item.message_count} message{item.message_count === 1 ? '' : 's'}
+            </span>
           </span>
         </Link>
       )}
-      <div className="flex gap-2 flex-shrink-0">
+      <div className="flex shrink-0 gap-1">
         {item.role === 'guest' ? (
-          <button
-            type="button"
-            onClick={handleRemoveGuestSession}
-            className="px-3 py-1 text-sm rounded-md border border-ink-200 text-red-600 hover:bg-red-50"
-          >
-            Remove
-          </button>
+          <IconButton label="Remove from my sessions" tone="danger" onClick={() => setConfirming('remove')}>
+            <UserMinus className="h-4 w-4" aria-hidden />
+          </IconButton>
         ) : (
           <>
-            <button
-              type="button"
-              onClick={startEditing}
-              disabled={isEditing}
-              className="px-3 py-1 text-sm rounded-md border border-accent-500 text-accent-500 hover:bg-accent-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Rename
-            </button>
-            <button
-              type="button"
-              onClick={handleDelete}
-              className="px-3 py-1 text-sm rounded-md border border-ink-200 text-red-600 hover:bg-red-50"
-            >
-              Delete
-            </button>
+            <IconButton label="Rename session" onClick={startEditing} disabled={isEditing}>
+              <Pencil className="h-4 w-4" aria-hidden />
+            </IconButton>
+            <IconButton label="Delete session" tone="danger" onClick={() => setConfirming('delete')}>
+              <Trash2 className="h-4 w-4" aria-hidden />
+            </IconButton>
           </>
         )}
       </div>
+      <ConfirmDialog
+        open={confirming === 'delete'}
+        onClose={() => setConfirming(null)}
+        title="Delete this session?"
+        description={deleteConfirmationText(item)}
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        tone="danger"
+        onConfirm={handleDelete}
+      />
+      <ConfirmDialog
+        open={confirming === 'remove'}
+        onClose={() => setConfirming(null)}
+        title="Remove from your sessions?"
+        description={`"${formatSessionTitle(item)}" will disappear from your list. The session itself stays with its owner, and you can add it again from its share link.`}
+        confirmLabel="Remove"
+        pendingLabel="Removing…"
+        tone="danger"
+        onConfirm={handleRemoveGuestSession}
+      />
     </li>
   )
 }

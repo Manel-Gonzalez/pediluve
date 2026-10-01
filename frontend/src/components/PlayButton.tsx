@@ -1,3 +1,6 @@
+import { Loader2, Pause, RotateCcw, Volume2 } from 'lucide-react'
+import { IconButton } from './IconButton'
+
 // Per-line playback (KAN-33/KAN-58): first click requests the audio (a
 // cache miss costs one ElevenLabs call server-side, a hit is instant), a
 // later click just replays the signed URL already held.
@@ -39,16 +42,12 @@ export function PlayButton({
     onRequestAudio(index)
   }
 
-  const label = loading ? 'Loading…' : isPlaying ? 'Pause' : error ? 'Retry' : 'Play'
+  const label = loading ? 'Loading audio…' : isPlaying ? 'Stop' : error ? `Retry - ${error}` : 'Listen to this line'
+  const Icon = loading ? Loader2 : isPlaying ? Pause : error ? RotateCcw : Volume2
 
   return (
-    <button
-      onClick={handleClick}
-      disabled={loading}
-      title={error ?? undefined}
-      className="w-fit rounded border border-ink-200 px-2 py-1 text-xs font-medium text-ink-900 hover:border-ink-300 disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      {label}
-    </button>
+    <IconButton label={label} onClick={handleClick} disabled={loading} className="-ml-2">
+      <Icon className={`h-4 w-4 ${loading ? 'motion-safe:animate-spin' : ''}`} aria-hidden />
+    </IconButton>
   )
 }

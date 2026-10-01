@@ -4,9 +4,20 @@ import { useNavigate } from 'react-router-dom'
 import { ApiError, createSession } from '../lib/api'
 import { liveSessionPath } from '../lib/routes'
 import { validateSessionTitle } from '../lib/sessionTitle'
+import { Button } from './Button'
+import { Dialog } from './Dialog'
 
-export function NewSessionModal({ session }: { session: Session }) {
-  const dialogRef = useRef<HTMLDialogElement>(null)
+// Controlled by the page (KAN-77) so more than one place can open it: the
+// header's "New session" button and the empty state's call to action.
+export function NewSessionModal({
+  session,
+  open,
+  onClose,
+}: {
+  session: Session
+  open: boolean
+  onClose: () => void
+}) {
   // A ref, not just the `pending` state below: two rapid clicks can both
   // read `pending` as still false before React has re-rendered with the
   // disabled button, since setState doesn't take effect synchronously. This
@@ -17,10 +28,10 @@ export function NewSessionModal({ session }: { session: Session }) {
   const [pending, setPending] = useState(false)
   const navigate = useNavigate()
 
-  const openModal = () => {
+  const handleClose = () => {
     setTitle('')
     setError(null)
-    dialogRef.current?.showModal()
+    onClose()
   }
 
   const handleSubmit = async (event: FormEvent) => {
@@ -38,7 +49,6 @@ export function NewSessionModal({ session }: { session: Session }) {
     setError(null)
     try {
       const row = await createSession(session, validation.title)
-      dialogRef.current?.close()
       navigate(liveSessionPath(row.id))
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Could not create session')
@@ -49,52 +59,36 @@ export function NewSessionModal({ session }: { session: Session }) {
   }
 
   return (
-    <>
-      <button
-        onClick={openModal}
-        className="bg-accent-500 text-white hover:bg-accent-600 rounded-md px-4 py-2"
-      >
-        New session
-      </button>
-      {/* Esc closes a native <dialog> on its own (fires "cancel" then
-          "close") - no extra handling needed for that part of the spec. */}
-      <dialog
-        ref={dialogRef}
-        className="bg-white rounded-lg shadow-lg p-6 min-w-80 backdrop:bg-black/40"
-      >
-        <form onSubmit={handleSubmit} className="flex flex-col">
-          <h2 className="text-xl font-medium mt-0 mb-3">New session</h2>
-          <label className="flex flex-col gap-1 text-sm font-medium mb-4">
-            Title
-            <input
-              autoFocus
-              maxLength={120}
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              disabled={pending}
-              className="px-3 py-2 border border-ink-200 rounded-md text-base font-normal focus:border-accent-500 focus:outline-none"
-            />
-          </label>
-          {error && <p className="text-red-600 mb-4">{error}</p>}
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => dialogRef.current?.close()}
-              disabled={pending}
-              className="px-4 py-2 rounded-md border border-ink-200 disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={pending}
-              className="bg-accent-500 text-white hover:bg-accent-600 rounded-md px-4 py-2 disabled:opacity-50"
-            >
-              {pending ? 'Creating…' : 'Create'}
-            </button>
-          </div>
-        </form>
-      </dialog>
-    </>
+    <Dialog open={open} onClose={handleClose} title="New session" dismissible={!pending}>
+      <form onSubmit={handleSubmit} className="flex flex-col">
+        <p className="mb-4 text-sm text-muted">Give it a name - you can rename it later.</p>
+        <label className="mb-4 flex flex-col gap-1.5 text-sm font-medium">
+          Title
+          <input
+            data-autofocus
+            maxLength={120}
+            value={title}
+            placeholder="e.g. Weekly standup"
+            onChange={(event) => setTitle(event.target.value)}
+            disabled={pending}
+            aria-invalid={error ? true : undefined}
+            className="h-10 rounded-lg border border-line px-3 text-base font-normal placeholder:text-muted/70 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+        </label>
+        {error && (
+          <p role="alert" className="mb-4 text-sm text-danger">
+            {error}
+          </p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button onClick={handleClose} disabled={pending}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" loading={pending}>
+            {pending ? 'Creating…' : 'Create and start'}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
   )
 }

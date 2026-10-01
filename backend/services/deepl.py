@@ -25,6 +25,8 @@ _TARGET_LANGUAGE_CODES = {
     "en": "EN-US",
     "fr": "FR",
     "de": "DE",
+    "ro": "RO",
+    "nl": "NL",
 }
 
 # The UI-facing codes callers (routers/ws.py) may accept from a client. Kept as a

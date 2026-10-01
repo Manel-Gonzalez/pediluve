@@ -5,8 +5,11 @@ from services.auth import AuthenticatedUser
 
 
 class FakeResult:
-    def __init__(self, data):
+    # Like postgrest's APIResponse: `count` is None unless the select asked
+    # for one (count="exact" -> "Prefer: count=exact" -> Content-Range total).
+    def __init__(self, data, count=None):
         self.data = data
+        self.count = count
 
 
 class FakeQuery:
@@ -21,6 +24,7 @@ class FakeQuery:
         self._order_column = None
         self._order_desc = False
         self._range = None
+        self._count = None
 
     def insert(self, payload):
         self._op = "insert"
@@ -38,7 +42,8 @@ class FakeQuery:
         self._payload = payload
         return self
 
-    def select(self, columns="*"):
+    def select(self, columns="*", count=None):
+        self._count = count
         if self._op is None:
             self._op = "select"
         return self
@@ -121,10 +126,11 @@ class FakeQuery:
                 matched = sorted(
                     matched, key=lambda row: row[self._order_column], reverse=self._order_desc
                 )
+            total = len(matched) if self._count == "exact" else None
             if self._range is not None:
                 start, end = self._range
                 matched = matched[start : end + 1]
-            return FakeResult(matched)
+            return FakeResult(matched, count=total)
         raise AssertionError(f"unexpected operation: {self._op}")
 
 
@@ -435,7 +441,7 @@ async def test_list_sessions_orders_newest_first(fake_client):
     newer = await supabase.create_session(user(), title="Newer")
     fake_client.store["sessions"][1]["created_at"] = "2026-01-02T00:00:00Z"
 
-    rows, has_more = await supabase.list_sessions(user(), limit=20, offset=0)
+    rows, has_more, _ = await supabase.list_sessions(user(), limit=20, offset=0)
 
     assert [row["id"] for row in rows] == [newer["id"], older["id"]]
     assert has_more is False
@@ -446,13 +452,50 @@ async def test_list_sessions_honors_limit_and_computes_has_more(fake_client):
         await supabase.create_session(user(), title=f"Session {i}")
         fake_client.store["sessions"][i]["created_at"] = f"2026-01-0{i + 1}T00:00:00Z"
 
-    rows, has_more = await supabase.list_sessions(user(), limit=2, offset=0)
+    rows, has_more, _ = await supabase.list_sessions(user(), limit=2, offset=0)
     assert len(rows) == 2
     assert has_more is True
 
-    rows, has_more = await supabase.list_sessions(user(), limit=2, offset=2)
+    rows, has_more, _ = await supabase.list_sessions(user(), limit=2, offset=2)
     assert len(rows) == 1
     assert has_more is False
+
+
+async def test_list_sessions_returns_the_total_across_all_pages(fake_client):
+    # KAN-75: the home page's "Page 2 of 7" needs the total, not just
+    # has_more - independent of which page was asked for.
+    for i in range(5):
+        await supabase.create_session(user(), title=f"Session {i}")
+
+    _, _, total = await supabase.list_sessions(user(), limit=2, offset=0)
+    assert total == 5
+    rows, _, total = await supabase.list_sessions(user(), limit=2, offset=4)
+    assert len(rows) == 1
+    assert total == 5
+
+
+async def test_list_sessions_total_is_zero_with_no_sessions(fake_client):
+    _, _, total = await supabase.list_sessions(user(), limit=10, offset=0)
+    assert total == 0
+
+
+def test_count_exact_is_what_the_real_postgrest_client_sends_and_parses():
+    # Contract check against the real library, not the fake above (the
+    # Storage-header bug in decisions.md came from a fake that modelled the
+    # client wrongly): count="exact" must become "Prefer: count=exact", and
+    # the total must come back from the Content-Range header.
+    import httpx
+    from postgrest import AsyncPostgrestClient
+    from postgrest.base_request_builder import APIResponse
+
+    query = AsyncPostgrestClient("http://example.invalid/rest/v1").table("sessions").select("*", count="exact")
+    assert query.request.headers["prefer"] == "count=exact"
+
+    # postgrest only reads the total when the request itself asked for one,
+    # so the response is paired with the headers that query really sends.
+    request = httpx.Request("GET", "http://example.invalid/rest/v1/sessions", headers=query.request.headers)
+    response = httpx.Response(200, json=[{"id": "a"}], headers={"content-range": "0-0/67"}, request=request)
+    assert APIResponse.from_http_request_response(response).count == 67
 
 
 async def test_list_sessions_includes_message_count(fake_client):
@@ -462,7 +505,7 @@ async def test_list_sessions_includes_message_count(fake_client):
     other = await supabase.create_session(user(), title="Other")
     await supabase.save_message(user(), other["id"], 0, "solo")
 
-    rows, _ = await supabase.list_sessions(user(), limit=20, offset=0)
+    rows, _, _ = await supabase.list_sessions(user(), limit=20, offset=0)
 
     counts = {row["id"]: row["message_count"] for row in rows}
     assert counts[session["id"]] == 2
@@ -470,14 +513,14 @@ async def test_list_sessions_includes_message_count(fake_client):
 
 
 async def test_list_sessions_with_no_sessions_returns_an_empty_list(fake_client):
-    rows, has_more = await supabase.list_sessions(user(), limit=20, offset=0)
+    rows, has_more, _ = await supabase.list_sessions(user(), limit=20, offset=0)
     assert rows == []
     assert has_more is False
 
 
 async def test_list_sessions_marks_owned_sessions_with_role_owner(fake_client):
     await supabase.create_session(user(), title="Mine")
-    rows, _has_more = await supabase.list_sessions(user(), limit=20, offset=0)
+    rows, _has_more, _total = await supabase.list_sessions(user(), limit=20, offset=0)
     assert rows[0]["role"] == "owner"
     assert rows[0]["guest_language"] is None
 
@@ -489,7 +532,7 @@ async def test_list_sessions_prefers_owner_role_even_with_a_stray_guest_row(fake
     fake_client.store.setdefault("session_guests", []).append(
         {"session_id": session["id"], "user_id": "user-1", "target_language": "fr"}
     )
-    rows, _has_more = await supabase.list_sessions(user(), limit=20, offset=0)
+    rows, _has_more, _total = await supabase.list_sessions(user(), limit=20, offset=0)
     assert rows[0]["role"] == "owner"
     assert rows[0]["guest_language"] is None
 
@@ -502,7 +545,7 @@ async def test_list_sessions_marks_guest_sessions_with_role_and_language(fake_cl
     # RLS would be what actually makes this row visible to the guest in
     # production; the fake store has no RLS, so this test only exercises
     # the role/guest_language annotation, not visibility itself.
-    rows, _has_more = await supabase.list_sessions(user(access_token="tok-a", id="user-1"), limit=20, offset=0)
+    rows, _has_more, _total = await supabase.list_sessions(user(access_token="tok-a", id="user-1"), limit=20, offset=0)
     assert rows[0]["role"] == "guest"
     assert rows[0]["guest_language"] == "fr"
 

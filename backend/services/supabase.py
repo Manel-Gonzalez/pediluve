@@ -197,12 +197,15 @@ async def end_session(user: AuthenticatedUser, session_id: str) -> None:
 
 async def list_sessions(
     user: AuthenticatedUser, limit: int = 20, offset: int = 0
-) -> tuple[list[dict], bool]:
+) -> tuple[list[dict], bool, int]:
+    # Returns (page rows, has_more, total). The total counts every session
+    # this user can see - owned and guest, same RLS scope as the rows - so
+    # the home page can say "Page 2 of 7" (KAN-75).
     client = await client_for(user.access_token)
     try:
         result = (
             await client.table("sessions")
-            .select("*")
+            .select("*", count="exact")
             .order("created_at", desc=True)
             .range(offset, offset + limit)
             .execute()
@@ -211,6 +214,7 @@ async def list_sessions(
         # separate count query.
         has_more = len(result.data) > limit
         rows = result.data[:limit]
+        total = result.count or 0
 
         if rows:
             ids = [row["id"] for row in rows]
@@ -227,7 +231,7 @@ async def list_sessions(
                 row["message_count"] = counts.get(row["id"], 0)
             await _attach_role_and_guest_language(client, user, rows)
 
-        return rows, has_more
+        return rows, has_more, total
     finally:
         await client.postgrest.aclose()
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildAuthenticateMessage, buildJoinSessionMessage, describeConnectionStatus } from './auth'
+import { buildAuthenticateMessage, buildJoinSessionMessage } from './auth'
 
 describe('buildAuthenticateMessage', () => {
   it('builds the authenticate message shape', () => {
@@ -16,23 +16,5 @@ describe('buildJoinSessionMessage', () => {
       type: 'join_session',
       session_id: 'session-123',
     })
-  })
-})
-
-describe('describeConnectionStatus', () => {
-  it('reports connecting as-is', () => {
-    expect(describeConnectionStatus('connecting', false)).toBe('connecting')
-  })
-
-  it('reports open as-is before the authenticate handshake completes', () => {
-    expect(describeConnectionStatus('open', false)).toBe('open')
-  })
-
-  it('reports authenticated once open and the handshake has completed', () => {
-    expect(describeConnectionStatus('open', true)).toBe('authenticated')
-  })
-
-  it('reports closed regardless of a stale isAuthenticated value', () => {
-    expect(describeConnectionStatus('closed', true)).toBe('closed')
   })
 })

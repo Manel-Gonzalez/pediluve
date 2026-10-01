@@ -3,7 +3,7 @@ import type { SetTargetLanguageMessage, StartTranscriptionMessage } from './type
 
 // DeepL-supported candidate set (see CLAUDE.md), matching the backend's
 // deepl.SUPPORTED_TARGET_LANGUAGES.
-export const SUPPORTED_LANGUAGES = ['es', 'ca', 'en', 'fr', 'de'] as const
+export const SUPPORTED_LANGUAGES = ['es', 'ca', 'en', 'fr', 'de', 'ro', 'nl'] as const
 
 // Sent automatically once authenticated, before the user has touched the
 // target-language control - otherwise any transcript committed before their

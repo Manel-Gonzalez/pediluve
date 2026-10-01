@@ -114,6 +114,8 @@ export type SessionSummary = {
 export type SessionListResponse = {
   items: SessionSummary[]
   has_more: boolean
+  // Every session the user can see, across all pages (KAN-75).
+  total: number
 }
 
 export type MessageRecord = {

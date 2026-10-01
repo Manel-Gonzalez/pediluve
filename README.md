@@ -142,7 +142,7 @@ architecture.
 | Translation | DeepL API (Free tier) | 500k chars/month free, low latency |
 | Auth | Supabase Auth (email + password) | No custom auth endpoints to build or secure |
 | Routing | React Router | `/login` + per-session URLs, survives a reload |
-| Styling | Tailwind CSS | Design tokens (colors, type scale) instead of hand-rolled CSS per component |
+| Styling | Tailwind CSS + `lucide-react` icons | Semantic light/dark tokens (CSS variables), one definition per theme |
 | TTS | ElevenLabs | On-demand playback, owner and QR viewers alike, cached per (message, language) |
 | Sharing | `qrcode` (frontend) | Plain SVG/data-URL QR code for a session's read-only live view link |
 | Persistence | Supabase (PostgreSQL) | Free tier, hosted, Row Level Security scopes data per user |
@@ -160,6 +160,7 @@ tunnel exposes it only while the demo runs (see [Public demo](#public-demo-throu
 - [x] **Phase 4.5 — Visual design**: Tailwind CSS with a small design-token system (colors, type scale), every page/component migrated off hand-written CSS, a redesigned paired-card transcript view
 - [x] **Phase 5 — QR code live viewer + TTS**: a QR code / share link gives anyone a read-only live view of a session, translating live into their own language, no account needed; a signed-in viewer can add it to their own sessions; play a translated line back, generated once and cached in Supabase Storage, for the owner and viewers alike
 - [x] **After Phase 5 — Real-device polish**: lower live latency (1 s end-of-sentence, database write off the path to the screen), a "speaking…" indicator for listeners, a one-command public demo through a temporary tunnel
+- [x] **Phase 5.5 — Visual redesign**: light/dark theme that follows the OS, redesigned login with password confirmation, in-app confirm dialogs, icon actions, sessions paginated 10 per page, a mobile-first live viewer (blurred while paused, a clear "session ended" state, auto-scroll)
 - [ ] **Phase 6 — Spike** *(parked)*: speaker labels, only if a real multi-mic use case shows up; further voice-activity-detection tuning
 
 ## Running locally

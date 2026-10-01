@@ -6,7 +6,7 @@ type TranscriptRowData = TranslatedRow & { original_text: string }
 
 export function LanguageBadge({ children }: { children: string }) {
   return (
-    <span className="inline-block rounded bg-accent-50 px-1.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-accent-700">
+    <span className="inline-block rounded-full bg-highlight px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-highlight-fg">
       {children}
     </span>
   )
@@ -25,16 +25,14 @@ export function TranscriptRow({
 }) {
   const pending = isTranslationPending(row)
   return (
-    <div className="grid grid-cols-2 gap-3">
-      <div className="rounded-lg border border-ink-200 p-3">
+    <div className="grid overflow-hidden rounded-xl border border-line bg-surface sm:grid-cols-2">
+      <div className="border-b border-line p-4 sm:border-b-0 sm:border-r">
         <LanguageBadge>{sourceLanguage ?? 'Original'}</LanguageBadge>
-        <p className="mt-1.5 text-sm text-ink-900">{row.original_text}</p>
+        <p className="mt-2 text-muted">{row.original_text}</p>
       </div>
-      <div className="rounded-lg border border-ink-200 p-3">
+      <div className="p-4">
         <LanguageBadge>{row.target_language ?? 'Translation'}</LanguageBadge>
-        <p className={`mt-1.5 text-sm ${pending ? 'italic text-ink-500' : 'text-ink-900'}`}>
-          {describeTranslation(row)}
-        </p>
+        <p className={`mt-2 ${pending ? 'italic text-muted' : 'text-fg'}`}>{describeTranslation(row)}</p>
       </div>
     </div>
   )
