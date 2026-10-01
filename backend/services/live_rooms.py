@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -16,6 +17,11 @@ _SEND_TIMEOUT_SECONDS = 5.0
 # How long a viewer's request_audio waits for the owner's Supabase save to
 # produce a message_id (KAN-65: lines go out before their save finishes).
 _MESSAGE_ID_TIMEOUT_SECONDS = 10.0
+
+# KAN-88: at most one in-progress sentence update per room this often.
+# ElevenLabs revises a partial several times a second; viewers on a phone
+# connection only need the latest, a few times a second.
+_PARTIAL_INTERVAL_SECONDS = 0.25
 
 
 class Viewer(Protocol):
@@ -64,19 +70,26 @@ class LiveRoom:
         self.title = title
         self.source_language = source_language
         self.state = "paused"
-        # Whether the owner is mid-sentence (KAN-65) - viewers only ever see
-        # committed, translated lines, so this is what tells them one is on
-        # its way.
+        # Whether the owner is mid-sentence (KAN-65) - what tells viewers a
+        # translated line is on its way, before any partial text arrives.
         self.speaking = False
+        # The sentence in progress, untranslated (KAN-88) - what a viewer
+        # sees in place of the dots. None between sentences.
+        self.partial: str | None = None
+        # Throttling for publish_partial: the newest text not yet queued,
+        # when the last one was queued, and the flush scheduled for it.
+        self._latest_partial: str | None = None
+        self._last_partial_at = float("-inf")
+        self._partial_timer: asyncio.TimerHandle | None = None
         self.lines: list[RoomLine] = []
         # id -> (viewer, target_language); a plain incrementing id rather
         # than the viewer object itself as the key, so add/remove/update are
         # all simple dict operations without requiring Viewer to be hashable.
         self.viewers: dict[int, tuple[Viewer, str]] = {}
         self.refcount = 0
-        # Lines and speaking updates share one queue so they reach viewers
-        # in the order the owner produced them: ("line", args) or
-        # ("speaking", bool).
+        # Lines, speaking and partial updates share one queue so they reach
+        # viewers in the order the owner produced them: ("line", args),
+        # ("speaking", bool) or ("partial", str | None).
         self._queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
         self._worker_task: asyncio.Task | None = None
         self._next_viewer_id = 0
@@ -92,6 +105,7 @@ class LiveRoom:
             self._worker_task = asyncio.create_task(self._run_worker())
 
     async def stop_worker(self) -> None:
+        self._drop_pending_partial()
         if self._worker_task is None:
             return
         self._worker_task.cancel()
@@ -157,12 +171,44 @@ class LiveRoom:
         # transcript path, which must not be slowed by viewer translation
         # calls or viewer socket I/O. message_id may be the owner's still-
         # running save (KAN-65) rather than an id - see RoomLine.
+        # A partial still waiting out its throttle belongs to this very
+        # sentence: sent after the line, it would show stale text.
+        self._drop_pending_partial()
         self._queue.put_nowait(("line", (original_text, owner_target_language, owner_translated_text, message_id)))
 
     def publish_speaking(self, speaking: bool) -> None:
         # Queued rather than sent directly (unlike broadcast_status) so a
         # "stopped speaking" can never overtake the line it belongs to.
+        if not speaking:
+            self._drop_pending_partial()
         self._queue.put_nowait(("speaking", speaking))
+
+    def publish_partial(self, text: str) -> None:
+        # Never awaits, like publish(). Throttled with a trailing flush: the
+        # first update goes out at once, later ones within the interval are
+        # coalesced, and the newest still goes out once it ends.
+        self._latest_partial = text
+        if self._partial_timer is not None:
+            return  # the scheduled flush will pick this text up
+        wait = self._last_partial_at + _PARTIAL_INTERVAL_SECONDS - time.monotonic()
+        if wait <= 0:
+            self._flush_partial()
+        else:
+            self._partial_timer = asyncio.get_running_loop().call_later(wait, self._flush_partial)
+
+    def _flush_partial(self) -> None:
+        self._partial_timer = None
+        if self._latest_partial is None:
+            return
+        self._last_partial_at = time.monotonic()
+        self._queue.put_nowait(("partial", self._latest_partial))
+        self._latest_partial = None
+
+    def _drop_pending_partial(self) -> None:
+        self._latest_partial = None
+        if self._partial_timer is not None:
+            self._partial_timer.cancel()
+            self._partial_timer = None
 
     async def _run_worker(self) -> None:
         while True:
@@ -170,6 +216,8 @@ class LiveRoom:
             try:
                 if kind == "speaking":
                     await self._set_speaking(payload)
+                elif kind == "partial":
+                    await self._set_partial(payload)
                 else:
                     await self._publish_one(*payload)
             except Exception:
@@ -178,10 +226,19 @@ class LiveRoom:
                 self._queue.task_done()
 
     async def _set_speaking(self, speaking: bool) -> None:
+        if not speaking:
+            # Noise, or a pause mid-sentence: no line will clear it.
+            await self._set_partial(None)
         if speaking == self.speaking:
             return
         self.speaking = speaking
         await self._broadcast({"type": "live_speaking", "speaking": speaking}, "live_speaking")
+
+    async def _set_partial(self, text: str | None) -> None:
+        if text == self.partial:
+            return
+        self.partial = text
+        await self._broadcast({"type": "live_partial", "text": text}, "live_partial")
 
     async def _publish_one(
         self,
@@ -215,6 +272,9 @@ class LiveRoom:
                 else:
                     line.translations[language] = result
 
+        # Cleared only now, not when the sentence was committed: viewers
+        # keep seeing it while it's being translated.
+        await self._set_partial(None)
         await self._broadcast_line(line)
 
     async def _broadcast_line(self, line: RoomLine) -> None:

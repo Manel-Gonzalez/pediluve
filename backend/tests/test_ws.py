@@ -1540,9 +1540,9 @@ def _speaking_and_lines(monkeypatch, joined_ws, fake_supabase, canned):
 
 
 def test_viewers_are_told_when_the_owner_starts_and_stops_speaking(monkeypatch, joined_ws, fake_supabase):
-    # KAN-65: partials never reach viewers (they aren't translated), so a
-    # "speaking" flag is what tells them a line is on its way. "Stopped"
-    # comes after the line, never before it.
+    # KAN-65: the "speaking" flag tells viewers a line is on its way (KAN-88
+    # adds the untranslated text itself, tested below). "Stopped" comes
+    # after the line, never before it.
     canned = [
         {"message_type": "partial_transcript", "text": ""},
         {"message_type": "partial_transcript", "text": "ho"},
@@ -1565,6 +1565,47 @@ def test_speaking_drops_when_the_sentence_turns_out_to_be_noise(monkeypatch, joi
     ]
     assert _speaking_and_lines(monkeypatch, joined_ws, fake_supabase, canned) == [
         ("live_speaking", True),
+        ("live_speaking", False),
+    ]
+
+
+def test_viewers_see_the_sentence_in_progress_untranslated(monkeypatch, joined_ws, fake_supabase):
+    # KAN-88: the owner's partials go to the room as they are - no DeepL
+    # call - and the committed line clears them. Throttling off here so the
+    # sequence is deterministic (it has its own tests in test_live_rooms).
+    monkeypatch.setattr(live_rooms, "_PARTIAL_INTERVAL_SECONDS", 0)
+    canned = [
+        {"message_type": "partial_transcript", "text": ""},
+        {"message_type": "partial_transcript", "text": "ho"},
+        {"message_type": "partial_transcript", "text": "hola"},
+        {"message_type": "committed_transcript", "text": "hola"},
+    ]
+    monkeypatch.setattr("routers.ws.RealtimeTranscriptionSession", make_fake_session_class(canned))
+    with joined_ws() as (ws, session_id):
+        share_token = fake_supabase.sessions[session_id]["share_token"]
+        room = live_rooms.registry.get(share_token)
+        viewer = FakeViewer()
+        room.add_viewer(viewer, "es")
+
+        ws.send_json({"type": "start_transcription"})
+        ws.send_json({"type": "stop_transcription"})
+        ws.send_json({"type": "message", "text": "sync"})
+        while ws.receive_json() != {"type": "echo", "text": "sync"}:
+            pass
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and viewer.received[-1:] != [{"type": "live_speaking", "speaking": False}]:
+            time.sleep(0.01)
+
+    assert [
+        (m["type"], m.get("text", m.get("speaking", m.get("original_text"))))
+        for m in viewer.received
+        if m["type"] in ("live_speaking", "live_partial", "live_line")
+    ] == [
+        ("live_speaking", True),
+        ("live_partial", "ho"),
+        ("live_partial", "hola"),
+        ("live_partial", None),
+        ("live_line", "hola"),
         ("live_speaking", False),
     ]
 
@@ -1600,6 +1641,7 @@ def test_end_to_end_a_real_viewer_socket_receives_the_owners_committed_transcrip
                 "target_language": "fr",
                 "state": "paused",
                 "speaking": False,
+                "partial": None,
                 "lines": [],
             }
 

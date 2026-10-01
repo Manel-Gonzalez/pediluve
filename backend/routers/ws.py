@@ -401,10 +401,14 @@ class ConnectionHandler:
         async for event in session.events():
             event_type = event.get("message_type")
             if event_type == "partial_transcript":
-                if event["text"].strip() and not self._speaking:
+                if event["text"].strip():
+                    if not self._speaking and self.live_room is not None:
+                        self.live_room.publish_speaking(True)
                     self._speaking = True
                     if self.live_room is not None:
-                        self.live_room.publish_speaking(True)
+                        # KAN-88: viewers see the sentence as it's said, in
+                        # the speaker's language (the room throttles these).
+                        self.live_room.publish_partial(event["text"])
                 await self.send(PartialTranscript(text=event["text"]).model_dump())
             elif event_type == "committed_transcript":
                 # Queued even when empty (see _handle_committed_transcript):

@@ -266,23 +266,23 @@ confirmation), KAN-80 (viewer paused/not-started overlay, ended notice, clean fi
 KAN-68/69/70 superseded; KAN-71 stays parked under KAN-67. Verified on real devices (PC + phone,
 LAN and tunnel). Backend tests (`pytest`, 273) and frontend tests (`vitest`, 138) passing.
 
-KAN-84 — the viewer's pause overlay can be closed (a slim status bar replaces it for the rest of
-the visit, so earlier lines can be played during a pause), plus a "Recording resumed" toast. On
-`feature/KAN-84`. Frontend tests (`vitest`, 145) passing.
+Viewer follow-ups after real-device testing, **merged to `main`** (PRs #12-#16), each verified on
+real devices:
+- **KAN-84** (#12): the pause overlay can be closed; a slim status bar in the header replaces it for
+  the rest of the visit, plus a "Recording resumed" toast.
+- **KAN-85** (#13): "Listen from here" on each line (plays from it to the latest, then carries on
+  live); audio prefetched two lines ahead instead of the whole queue.
+- **KAN-86** (#14): "jump to latest" arrow whenever scrolled up, listening controls in the sticky
+  header, pause card centred on screen. Fixes: Listen live no longer skips its first line on phones;
+  concurrent audio requests for one line share a single TTS generation (no more Storage RLS race).
+- **KAN-87** (#15): a fresh TTS clip goes to the listener as soon as ElevenLabs returns it, served
+  from memory by `GET /api/live-audio/{token}`; the Storage upload and `message_audio` row follow
+  in the background. WebSocket contract unchanged.
+- **KAN-88** (#16): viewers see the speaker's sentence in progress, untranslated (no DeepL cost),
+  until the translated line replaces it - new `live_partial {text}` message and
+  `live_joined.partial` (contract change approved).
 
-KAN-85 — "Listen from here" on each viewer line: plays from that line to the latest, then carries
-on live; audio prefetched two lines ahead instead of the whole queue. On `feature/KAN-85` (branched
-from `feature/KAN-84`). Frontend tests (`vitest`, 151) passing.
-
-KAN-86 — viewer "jump to latest" arrow whenever scrolled up (a count once lines arrive), and the
-listening controls moved into the sticky header so they stay reachable on a phone. On
-`feature/KAN-86` (branched from `feature/KAN-85`). Frontend tests (`vitest`, 154) passing.
-Also on that branch: concurrent audio requests for one line share a single TTS generation.
-
-KAN-87 — a fresh TTS clip goes to the listener as soon as ElevenLabs returns it, served from
-memory by `GET /api/live-audio/{token}`; the Storage upload and `message_audio` row follow in the
-background. WebSocket contract unchanged. On `feature/KAN-87` (branched from `feature/KAN-86`).
-Backend tests (`pytest`, 291) passing.
+Backend tests (`pytest`, 299) and frontend tests (`vitest`, 157) passing.
 
 Next: record the README demo GIF and screenshots. KAN-71 (owner-reload grace period) is the one
 parked follow-up. Phase 6 stays parked - start with its spike (see Phase gates) only if a real

@@ -602,6 +602,24 @@ Linear, Raycast, Granola, and Apple Live Captions for the viewer.
   - **A failed upload** is logged and costs only a future cache hit.
   - **Rejected alternative:** base64 audio inside `audio_ready`. It would have changed the
     WebSocket contract, and bloated every message.
+- **Viewers see the sentence in progress, untranslated (KAN-88).** The dots (KAN-65) gave no
+  content while the owner spoke. Now the owner's partials go to viewers as they are said, in
+  the speaker's language, exactly like the owner's own panel. They're shown muted, italic and
+  dashed, with a language badge, until the translated line replaces them.
+  - **Why untranslated:** translating partials would cost a DeepL call per revision, several a
+    second, for text about to be replaced anyway.
+  - **Contract change, approved:** a new `live_partial {text}` message (`null` clears it), and
+    `live_joined.partial` for a viewer arriving mid-sentence.
+  - **Throttle:** the room sends at most one update every 250 ms, always the latest text, with
+    a trailing flush so the newest still goes out.
+  - **Ordering:** partials travel through the same queue as lines and the speaking flag, so a
+    partial never overtakes its line.
+  - **Clearing:** the line clears the partial only once its viewer translations are done, so
+    the sentence stays visible while it's translated. A stopped-speaking update clears it
+    too: noise, or a pause mid-sentence. A throttled update still pending for a just-committed
+    sentence is dropped rather than sent after its line.
+  - **Accessibility:** the bubble isn't a live region; a screen reader would read every
+    revision. The translated line is what matters.
 - **Every animation behind `motion-safe:`**, including the recording ping, the speaking dots, the
   login hero's waveform and the smooth auto-scroll.
 

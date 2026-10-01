@@ -7,6 +7,7 @@ const joined = {
   seenRecording: false,
   linesCount: 0,
   overlayDismissed: false,
+  partial: null,
 }
 
 describe('viewerControls', () => {
@@ -51,6 +52,7 @@ describe('viewerControls', () => {
       statusBar: 'none',
       showEndedNotice: true,
       showSpeaking: false,
+      speakingText: null,
       languageLocked: true,
       listenAvailable: false,
       perLinePlay: 'cached_only',
@@ -73,6 +75,25 @@ describe('viewerControls', () => {
   it('drops the bar while recording or once ended, even if dismissed', () => {
     expect(viewerControls({ ...joined, state: 'recording', overlayDismissed: true }).statusBar).toBe('none')
     expect(viewerControls({ ...joined, state: 'ended', overlayDismissed: true }).statusBar).toBe('none')
+  })
+})
+
+describe('speakingText (KAN-88)', () => {
+  it('shows the sentence in progress while the owner speaks', () => {
+    const controls = viewerControls({ ...joined, state: 'recording', speaking: true, partial: 'hola a to' })
+    expect(controls.showSpeaking).toBe(true)
+    expect(controls.speakingText).toBe('hola a to')
+  })
+
+  it('falls back to the dots before any text has arrived', () => {
+    const controls = viewerControls({ ...joined, state: 'recording', speaking: true, partial: null })
+    expect(controls.showSpeaking).toBe(true)
+    expect(controls.speakingText).toBeNull()
+  })
+
+  it('never shows leftover text once the owner stopped speaking', () => {
+    expect(viewerControls({ ...joined, state: 'recording', speaking: false, partial: 'hola' }).speakingText).toBeNull()
+    expect(viewerControls({ ...joined, state: 'paused', speaking: true, partial: 'hola' }).speakingText).toBeNull()
   })
 })
 
