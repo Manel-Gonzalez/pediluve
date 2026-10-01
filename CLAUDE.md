@@ -240,27 +240,30 @@ design). Real-device testing led to follow-up fixes and features on the same bra
 `docs/decisions.md`'s "Phase 5: changes after real-device testing" entry. Backend tests
 (`pytest`, 250) and frontend tests (`vitest`, 94) passing.
 
-KAN-65 — live latency, on `feature/KAN-65`, not yet merged: ElevenLabs' VAD commit delay down to
-1.0 s (`ELEVENLABS_VAD_SILENCE_SECS`), the Supabase save moved off the line's critical path (viewer
-audio requests wait for the pending `message_id`), and a `live_speaking` flag on `/ws/view` that
-shows a "speaking" bubble on the viewer page. See `docs/decisions.md`'s KAN-65 entry.
+KAN-65 — live latency, **merged to `main`** (PR #8): ElevenLabs' VAD commit delay down to 1.0 s
+(`ELEVENLABS_VAD_SILENCE_SECS`), the Supabase save moved off the line's critical path (viewer audio
+requests wait for the pending `message_id`), and a `live_speaking` flag on `/ws/view` that shows a
+"speaking" bubble on the viewer page. See `docs/decisions.md`'s KAN-65 entry.
 
-KAN-66 — public demo through a temporary Cloudflare tunnel, on `chore/KAN-66` (branched from
-`feature/KAN-65`), not yet merged: the frontend only talks to its own origin and the Vite dev
-server proxies `/api` and `/ws` to uvicorn, so one tunnel to `:5173` is enough. Not a deployment -
-see `docs/decisions.md`'s KAN-66 entry and README's "Public demo" section.
+KAN-66 — public demo through a temporary Cloudflare tunnel, **merged to `main`** (PR #9): the
+frontend only talks to its own origin and the Vite dev server proxies `/api` and `/ws` to uvicorn,
+so one tunnel to `:5173` is enough. Not a deployment - see `docs/decisions.md`'s KAN-66 entry and
+README's "Public demo" section. Verified with a real tunnel and a phone on mobile data.
 
-Phase 5.5 — visual redesign, on `feature/KAN-73` (branched from `docs/KAN-72`, so it carries
-KAN-65, KAN-66 and KAN-72 too), not yet merged: KAN-74 (light/dark tokens, theme toggle, favicon),
-KAN-76 (lucide icons, Button/IconButton, language names), KAN-77 (Dialog/ConfirmDialog, no more
-`window.confirm`), KAN-75 (`total` on `GET /api/sessions`), KAN-78 (HomePage, 10 per page, relative
-dates), KAN-79 (login redesign + password confirmation), KAN-80 (viewer paused/not-started overlay,
-ended notice, clean final state), KAN-81 (owner live page + detail page, status pill, End session
-confirm), KAN-82 (viewer auto-scroll + "new lines" chip). KAN-68/69/70 superseded; KAN-71 stays
-parked under KAN-67. Checked in Chromium (both themes, desktop and phone width) against mocked
-auth/API/WebSockets; not yet on real devices. Backend tests (`pytest`, 271) and frontend tests
-(`vitest`, 138) passing.
+KAN-72 — README as a portfolio showcase, **merged to `main`** (PR #10). The demo GIF and
+screenshots (`docs/media/`) are still to be recorded; their tags are commented out in the README
+until then.
 
-Next: verify KAN-65, KAN-66 and KAN-73 on real devices, then merge in order (KAN-65 → KAN-66 →
-KAN-72 → KAN-73). Phase 6 stays parked - start with its spike (see Phase gates) only if a real
+Phase 5.5 — visual redesign (KAN-73), **merged to `main`**: KAN-74 (light/dark tokens, theme
+toggle, favicon), KAN-76 (lucide icons, Button/IconButton, language names), KAN-77
+(Dialog/ConfirmDialog, no more `window.confirm`), KAN-75 (`total` on `GET /api/sessions`), KAN-78
+(HomePage, 10 per page in a self-scrolling card, relative dates), KAN-79 (login redesign + password
+confirmation), KAN-80 (viewer paused/not-started overlay, ended notice, clean final state), KAN-81
+(owner live page + detail page, status pill, End session confirm), KAN-82 (viewer auto-scroll +
+"new lines" chip). Romanian and Dutch added as spoken/translation languages on the same branch.
+KAN-68/69/70 superseded; KAN-71 stays parked under KAN-67. Verified on real devices (PC + phone,
+LAN and tunnel). Backend tests (`pytest`, 273) and frontend tests (`vitest`, 138) passing.
+
+Next: record the README demo GIF and screenshots. KAN-71 (owner-reload grace period) is the one
+parked follow-up. Phase 6 stays parked - start with its spike (see Phase gates) only if a real
 multi-mic use case shows up.
