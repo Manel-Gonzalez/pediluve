@@ -22,7 +22,8 @@ install, and can have each new line read aloud as it arrives.
   original.
 - **Share with a QR code**: listeners open a read-only live view on their phone and pick their own
   language, with no sign-up. A "speaking…" bubble shows while a sentence is on its way.
-- **Listen instead of read**: tap *Listen live* and each new line is read aloud (ElevenLabs TTS).
+- **Listen instead of read**: tap *Listen live* and each new line is read aloud (ElevenLabs TTS), or
+  *Listen from here* on any line to catch up from that point.
 - **Keep it**: sessions are saved per account, with history, rename/delete, re-translation into
   another language, and a `.txt` download. A signed-in listener can add a session to their own list.
 
