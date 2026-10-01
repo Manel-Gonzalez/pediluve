@@ -31,6 +31,7 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
     joinStatus,
     title,
     state,
+    speaking,
     lines,
     targetLanguage,
     setTargetLanguage,
@@ -191,11 +192,33 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
             )}
           </div>
         ))}
+        {isRecording && speaking && <SpeakingBubble />}
         {joinStatus === 'joining' && <p className="text-sm text-ink-500">Connecting…</p>}
-        {joinStatus === 'joined' && lines.length === 0 && (
+        {joinStatus === 'joined' && lines.length === 0 && !speaking && (
           <p className="text-sm text-ink-500">Nothing said yet.</p>
         )}
       </div>
+    </div>
+  )
+}
+
+// KAN-65: shown while the owner is mid-sentence - viewers only ever get
+// committed, translated lines, so without it the screen just sits still
+// until the whole sentence lands.
+function SpeakingBubble() {
+  return (
+    <div
+      role="status"
+      aria-label="The speaker is talking"
+      className="flex w-fit items-center gap-1 rounded-lg border border-ink-200 px-4 py-3"
+    >
+      {[0, 150, 300].map((delay) => (
+        <span
+          key={delay}
+          className="h-2 w-2 animate-bounce rounded-full bg-accent-400"
+          style={{ animationDelay: `${delay}ms` }}
+        />
+      ))}
     </div>
   )
 }

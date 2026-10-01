@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from contextlib import contextmanager
 
@@ -7,6 +8,7 @@ from starlette.testclient import WebSocketDisconnect
 
 from main import app
 import routers.viewer_ws as viewer_ws_module
+from routers.viewer_ws import ViewerConnectionHandler
 from services import live_rooms
 
 client = TestClient(app)
@@ -72,8 +74,17 @@ def test_join_live_with_a_known_token_returns_room_state_and_lines():
             "source_language": "en",
             "target_language": "fr",
             "state": "paused",
+            "speaking": False,
             "lines": [{"index": 0, "original_text": "hola", "translated_text": "salut"}],
         }
+
+
+def test_join_live_mid_sentence_reports_that_the_owner_is_speaking():
+    share_token, room = _make_room()
+    room.speaking = True
+
+    with _joined_viewer(share_token, "fr") as (_ws, joined):
+        assert joined["speaking"] is True
 
 
 def test_join_live_translates_missing_lines_for_the_requested_language():
@@ -211,6 +222,71 @@ def test_request_audio_returns_audio_ready_on_success(monkeypatch):
             "audio_url": "https://signed.example/msg-1.fr.mp3",
             "cached": False,
         }
+
+
+class _RecordingWebSocket:
+    def __init__(self):
+        self.sent: list[dict] = []
+
+    async def send_json(self, payload):
+        self.sent.append(payload)
+
+
+async def _request_audio_directly(room: live_rooms.LiveRoom, index: int) -> list[dict]:
+    # Drives the handler on the test's own event loop. Through TestClient,
+    # each socket runs on its own loop, so a save started on the owner's
+    # side couldn't be awaited from the viewer's - unlike in production.
+    websocket = _RecordingWebSocket()
+    handler = ViewerConnectionHandler(websocket)
+    handler.room = room
+    handler.target_language = "fr"
+    await handler._handle_request_audio({"type": "request_audio", "index": index})
+    return websocket.sent
+
+
+async def test_request_audio_waits_for_the_owners_save_to_finish(monkeypatch):
+    # KAN-65: a line reaches viewers before the owner's Supabase save
+    # finishes, and "Listen live" asks for audio the moment it arrives.
+    async def fake_get_or_create_audio_url(user, session_id, message_id, text, language):
+        return f"https://signed.example/{message_id}.{language}.mp3", False
+
+    monkeypatch.setattr(
+        "routers.viewer_ws.tts_cache.get_or_create_audio_url", fake_get_or_create_audio_url
+    )
+    _token, room = _make_room(
+        owner_user=_FakeOwnerUser(),
+        lines=[{"index": 0, "original_text": "hola", "translations": {"fr": "salut"}}],
+    )
+
+    async def slow_save():
+        await asyncio.sleep(0.05)
+        return "msg-1"
+
+    room.lines[0].pending_message_id = asyncio.ensure_future(slow_save())
+
+    assert await _request_audio_directly(room, 0) == [
+        {
+            "type": "audio_ready",
+            "index": 0,
+            "target_language": "fr",
+            "audio_url": "https://signed.example/msg-1.fr.mp3",
+            "cached": False,
+        }
+    ]
+
+
+async def test_request_audio_fails_when_the_owners_save_fails():
+    _token, room = _make_room(
+        owner_user=_FakeOwnerUser(),
+        lines=[{"index": 0, "original_text": "hola", "translations": {"fr": "salut"}}],
+    )
+    failed_save: asyncio.Future[str | None] = asyncio.get_running_loop().create_future()
+    failed_save.set_result(None)
+    room.lines[0].pending_message_id = failed_save
+
+    assert await _request_audio_directly(room, 0) == [
+        {"type": "audio_failed", "index": 0, "message": "Audio unavailable"}
+    ]
 
 
 def test_request_audio_for_an_out_of_range_index_returns_audio_failed():

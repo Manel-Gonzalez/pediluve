@@ -67,6 +67,67 @@ async def test_publish_stores_the_message_id_on_the_line_for_later_audio_lookup(
     assert room.lines[0].message_id == "msg-1"
 
 
+async def test_publish_can_take_a_pending_message_id_that_resolves_later():
+    # KAN-65: the owner publishes a line before its Supabase save finishes,
+    # so the id arrives after the line itself.
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    viewer = FakeViewer()
+    room.add_viewer(viewer, "fr")
+    room.start_worker()
+    save: asyncio.Future[str | None] = asyncio.get_running_loop().create_future()
+
+    room.publish("hola", None, None, message_id=save)
+    await _drain(room)
+
+    # Delivered to viewers without waiting on the save.
+    assert [m["type"] for m in viewer.received] == ["live_line"]
+    assert room.lines[0].message_id is None
+
+    save.set_result("msg-1")
+    assert await room.lines[0].resolved_message_id() == "msg-1"
+    assert room.lines[0].message_id == "msg-1"
+    await room.stop_worker()
+
+
+async def test_resolved_message_id_is_none_when_the_pending_save_fails():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    room.start_worker()
+    save: asyncio.Future[str | None] = asyncio.get_running_loop().create_future()
+
+    room.publish("hola", None, None, message_id=save)
+    await _drain(room)
+    save.set_result(None)
+
+    assert await room.lines[0].resolved_message_id() is None
+    await room.stop_worker()
+
+
+async def test_resolved_message_id_gives_up_after_a_timeout():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    room.start_worker()
+    save: asyncio.Future[str | None] = asyncio.get_running_loop().create_future()
+
+    room.publish("hola", None, None, message_id=save)
+    await _drain(room)
+
+    assert await room.lines[0].resolved_message_id(timeout=0.01) is None
+    # A late save still lands for the next request.
+    save.set_result("msg-1")
+    assert await room.lines[0].resolved_message_id() == "msg-1"
+    await room.stop_worker()
+
+
+async def test_resolved_message_id_returns_a_known_id_immediately():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    room.start_worker()
+
+    room.publish("hola", None, None, message_id="msg-1")
+    await _drain(room)
+
+    assert await room.lines[0].resolved_message_id() == "msg-1"
+    await room.stop_worker()
+
+
 async def test_publish_without_a_message_id_defaults_to_none():
     room = LiveRoom(session_id="s1", title=None, source_language=None)
     room.start_worker()
@@ -297,3 +358,44 @@ async def test_registry_release_stops_worker_and_drops_room_at_zero_refcount():
 async def test_registry_release_of_unknown_token_is_a_no_op():
     registry = LiveRoomRegistry()
     await registry.release("does-not-exist")
+
+
+async def test_speaking_is_broadcast_only_when_it_changes():
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    viewer = FakeViewer()
+    room.add_viewer(viewer, "fr")
+    room.start_worker()
+
+    room.publish_speaking(True)
+    room.publish_speaking(True)
+    room.publish_speaking(False)
+    room.publish_speaking(False)
+    await _drain(room)
+    await room.stop_worker()
+
+    assert viewer.received == [
+        {"type": "live_speaking", "speaking": True},
+        {"type": "live_speaking", "speaking": False},
+    ]
+    assert room.speaking is False
+
+
+async def test_speaking_updates_stay_in_order_with_lines():
+    # "Stopped speaking" must never overtake the line it belongs to, or the
+    # viewer's bubble would vanish before the line shows up.
+    room = LiveRoom(session_id="s1", title=None, source_language=None)
+    viewer = FakeViewer()
+    room.add_viewer(viewer, "fr")
+    room.start_worker()
+
+    room.publish_speaking(True)
+    room.publish("hola", None, None)
+    room.publish_speaking(False)
+    await _drain(room)
+    await room.stop_worker()
+
+    assert [(m["type"], m.get("speaking")) for m in viewer.received] == [
+        ("live_speaking", True),
+        ("live_line", None),
+        ("live_speaking", False),
+    ]

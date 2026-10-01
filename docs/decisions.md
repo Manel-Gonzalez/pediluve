@@ -455,6 +455,28 @@ couldn't, plus a few UX changes. Recorded here because each one changed a design
 - **The backend runs with `--timeout-graceful-shutdown 3`.** On Windows, uvicorn hung forever at
   "Shutting down" while a phone's `/ws/view` socket was open; the timeout bounds that wait.
 
+## Live latency: shorter VAD silence, save off the critical path, "speaking" flag (KAN-65)
+
+Real-device testing showed a line appearing about 2 s after the speaker stopped. Three changes:
+
+- **ElevenLabs' VAD commit delay went from 1.5 s (their default) to 1.0 s**, sent as
+  `vad_silence_threshold_secs` and overridable with `ELEVENLABS_VAD_SILENCE_SECS` (ElevenLabs accepts
+  0.3-3.0). 1.0 s still rides out a half-second hesitation; lower values split sentences at short
+  pauses, which also costs DeepL context and gives "Listen live" more, shorter fragments.
+- **The Supabase save no longer sits between translation and the send.** A committed line used to go
+  DeepL, then save, then send. The save now runs alongside the send and the room publish, and the
+  transcript worker still awaits it before the next line, which keeps `sequence` ordered and keeps
+  the "still persisted after a disconnect" guarantee. The catch: a viewer can see a line before its
+  `message_id` exists, and "Listen live" requests audio the moment a line arrives. So a room line
+  holds the pending save itself, and `request_audio` waits on it: capped at 10 s, and shielded so a
+  viewer's timeout can't cancel the owner's save.
+- **Viewers get a `live_speaking` flag.** They only ever see committed, translated lines, so while
+  the owner talks their screen sat still. The owner raises the flag on a sentence's first non-empty
+  partial and lowers it after that sentence's line is published, when the commit turns out to be
+  noise, or on pause. Sending partial *text* was rejected: viewers see translations only, and
+  translating every partial would multiply DeepL calls. The flag goes through the room's line
+  queue, not straight to viewers, so "stopped speaking" can never overtake its own line.
+
 ## Future: persisting partial transcripts + manual edit (parked, Phase 6+)
 
 **Context:** Manel's idea, while verifying Phase 4 by hand: if you pause right as you're mid-sentence,

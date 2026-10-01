@@ -79,6 +79,10 @@ class ConnectionHandler:
         # a fast second change can't be clobbered by a slower first one that
         # finishes later (see _retranslate_committed_texts).
         self._retranslation_generation = 0
+        # Whether the current sentence has started (a non-empty partial) and
+        # not yet been committed - drives the viewers' "speaking" indicator
+        # (KAN-65).
+        self._speaking = False
 
     async def send(self, payload: dict) -> None:
         async with self.send_lock:
@@ -386,25 +390,28 @@ class ConnectionHandler:
         self.relay_task = None
         self.transcript_queue = None
         self.transcript_worker_task = None
+        # A sentence cut off by the pause never gets its commit.
+        self._speaking = False
 
         if self.live_room is not None:
+            self.live_room.publish_speaking(False)
             await self.live_room.broadcast_status("paused")
 
     async def _relay_transcripts(self, session: RealtimeTranscriptionSession) -> None:
         async for event in session.events():
             event_type = event.get("message_type")
             if event_type == "partial_transcript":
+                if event["text"].strip() and not self._speaking:
+                    self._speaking = True
+                    if self.live_room is not None:
+                        self.live_room.publish_speaking(True)
                 await self.send(PartialTranscript(text=event["text"]).model_dump())
             elif event_type == "committed_transcript":
-                # ElevenLabs' VAD occasionally commits a segment with no
-                # recognized speech (silence, noise) - an empty or
-                # whitespace-only text rather than skipping the event
-                # entirely. Filtered here, at the source, so it never reaches
-                # the client, spends a DeepL call, or clutters Supabase/the
-                # in-memory retranslation history with a blank row.
-                text = event["text"]
-                if text.strip():
-                    await self.transcript_queue.put(text)
+                # Queued even when empty (see _handle_committed_transcript):
+                # the worker is what lowers the viewers' "speaking" flag, in
+                # order with the lines it publishes.
+                self._speaking = False
+                await self.transcript_queue.put(event["text"])
             elif event_type in ("session_started", "warning", "edited_transcript"):
                 logger.info("ElevenLabs event: %s", event)
             elif "error" in event:
@@ -421,6 +428,26 @@ class ConnectionHandler:
                 self.transcript_queue.task_done()
 
     async def _handle_committed_transcript(self, text: str) -> None:
+        # ElevenLabs' VAD occasionally commits a segment with no recognized
+        # speech (silence, noise) - an empty or whitespace-only text rather
+        # than skipping the event entirely. Dropped here so it never reaches
+        # the client, spends a DeepL call, or clutters Supabase/the in-memory
+        # retranslation history with a blank row.
+        if not text.strip():
+            self._stopped_speaking()
+            return
+        try:
+            await self._handle_spoken_line(text)
+        finally:
+            self._stopped_speaking()
+
+    def _stopped_speaking(self) -> None:
+        # Only if the next sentence hasn't already begun: its partials may
+        # arrive while this line is still being translated.
+        if not self._speaking and self.live_room is not None:
+            self.live_room.publish_speaking(False)
+
+    async def _handle_spoken_line(self, text: str) -> None:
         # Tracked regardless of translation outcome, so a later target-language
         # change has the full transcript to retranslate even if this specific
         # line's own translation failed.
@@ -437,40 +464,22 @@ class ConnectionHandler:
             except Exception:
                 logger.exception("Could not translate transcript")
 
-        message_id: str | None = None
-        if self.db_session_id is not None:
-            try:
-                # self.user read here, not captured earlier in this method - if a
-                # re-authenticate swapped it while the DeepL call above was in
-                # flight, this save uses the new token, per KAN-18.
-                saved = await supabase.save_message(
-                    self.user,
-                    self.db_session_id,
-                    self.sequence,
-                    text,
-                    translated_text=translated_text,
-                    target_language=target_language,
-                )
-                message_id = saved["id"]
-                self.sequence += 1
-            except Exception:
-                logger.exception("Could not save message to Supabase")
-
-        if self.live_room is not None:
-            # Never awaited: publish() only queues, so a slow/failing
-            # viewer-side translation or send can never stall this worker
-            # (see services/live_rooms.py and docs/decisions.md's D4).
-            # message_id stays None if the save above failed - that line
-            # just can't offer playback (KAN-58), nothing else changes.
-            self.live_room.publish(text, target_language, translated_text, message_id=message_id)
-
-        # Persisted before sending, not after: on a real disconnect, send()
-        # raises WebSocketDisconnect once the socket write actually fails,
-        # which must not skip (or, if unguarded, wipe out via an uncaught
-        # exception) the save above - the disconnect/cancellation-shielded
-        # cleanup path this now runs under exists precisely to still persist
-        # a committed transcript the client will never see.
+        # KAN-65: the save runs alongside the send and the room publish
+        # instead of before them, so a line's latency no longer includes a
+        # Supabase round trip. It's still awaited before this returns: the
+        # worker handles one line at a time, which keeps `sequence` in order,
+        # and _pause_transcription/_cleanup wait on that worker, so a
+        # committed line is still persisted even if the client disconnects.
+        save = asyncio.ensure_future(self._save_committed(text, translated_text, target_language))
         try:
+            if self.live_room is not None:
+                # Never awaited: publish() only queues, so a slow/failing
+                # viewer-side translation or send can never stall this worker
+                # (see services/live_rooms.py and docs/decisions.md's D4).
+                # The save itself stands in for the message_id until it
+                # finishes; a failed save resolves to None and that line just
+                # can't offer playback (KAN-58), nothing else changes.
+                self.live_room.publish(text, target_language, translated_text, message_id=save)
             await self.send(
                 Transcript(
                     original_text=text,
@@ -480,6 +489,31 @@ class ConnectionHandler:
             )
         except WebSocketDisconnect:
             pass
+        finally:
+            await save
+
+    async def _save_committed(
+        self, text: str, translated_text: str | None, target_language: str | None
+    ) -> str | None:
+        if self.db_session_id is None:
+            return None
+        try:
+            # self.user read here, not captured by the caller - if a
+            # re-authenticate swapped it while the DeepL call was in flight,
+            # this save uses the new token, per KAN-18.
+            saved = await supabase.save_message(
+                self.user,
+                self.db_session_id,
+                self.sequence,
+                text,
+                translated_text=translated_text,
+                target_language=target_language,
+            )
+        except Exception:
+            logger.exception("Could not save message to Supabase")
+            return None
+        self.sequence += 1
+        return saved["id"]
 
     async def _retranslate_committed_texts(self, target_language: str, generation: int) -> None:
         # Iterates the live list, not a snapshot: retranslated_transcripts

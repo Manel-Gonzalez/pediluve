@@ -19,6 +19,7 @@ export function useLiveViewer(shareToken: string) {
   const [title, setTitle] = useState<string | null>(null)
   const [sourceLanguage, setSourceLanguage] = useState<string | null>(null)
   const [state, setState] = useState<LiveState | null>(null)
+  const [speaking, setSpeaking] = useState(false)
   const [lines, setLines] = useState<LiveLineData[]>([])
   const [targetLanguage, setTargetLanguageState] = useState(DEFAULT_TARGET_LANGUAGE)
   // Keyed by room-local line index - a signed URL is only ever valid for
@@ -65,6 +66,7 @@ export function useLiveViewer(shareToken: string) {
         setTitle(data.title)
         setSourceLanguage(data.source_language)
         setState(data.state)
+        setSpeaking(data.speaking)
         setLines(data.lines)
         setJoinStatus('joined')
         return
@@ -80,6 +82,11 @@ export function useLiveViewer(shareToken: string) {
       }
       if (data.type === 'live_status') {
         setState(data.state)
+        if (data.state !== 'recording') setSpeaking(false)
+        return
+      }
+      if (data.type === 'live_speaking') {
+        setSpeaking(data.speaking)
         return
       }
       if (data.type === 'audio_ready') {
@@ -146,6 +153,7 @@ export function useLiveViewer(shareToken: string) {
     title,
     sourceLanguage,
     state,
+    speaking,
     lines,
     targetLanguage,
     setTargetLanguage,

@@ -227,5 +227,10 @@ design). Real-device testing led to follow-up fixes and features on the same bra
 `docs/decisions.md`'s "Phase 5: changes after real-device testing" entry. Backend tests
 (`pytest`, 250) and frontend tests (`vitest`, 94) passing.
 
-Next: no phase in progress. Phase 6 is parked - start with its spike (see Phase gates) only if a
-real multi-mic use case shows up.
+KAN-65 — live latency, on `feature/KAN-65`, not yet merged: ElevenLabs' VAD commit delay down to
+1.0 s (`ELEVENLABS_VAD_SILENCE_SECS`), the Supabase save moved off the line's critical path (viewer
+audio requests wait for the pending `message_id`), and a `live_speaking` flag on `/ws/view` that
+shows a "speaking" bubble on the viewer page. See `docs/decisions.md`'s KAN-65 entry.
+
+Next: verify KAN-65 on real devices and merge it. Phase 6 stays parked - start with its spike (see
+Phase gates) only if a real multi-mic use case shows up.
