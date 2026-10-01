@@ -12,6 +12,9 @@ export type ViewerControls = {
   statusBar: Waiting
   showEndedNotice: boolean
   showSpeaking: boolean
+  // The sentence in progress, untranslated (KAN-88) - shown in the speaking
+  // bubble instead of the dots once any text has arrived.
+  speakingText: string | null
   languageLocked: boolean
   listenAvailable: boolean
   perLinePlay: 'all' | 'cached_only'
@@ -24,6 +27,7 @@ export function viewerControls({
   seenRecording,
   linesCount,
   overlayDismissed,
+  partial,
 }: {
   joinStatus: ViewerJoinStatus
   state: LiveState | null
@@ -31,6 +35,7 @@ export function viewerControls({
   seenRecording: boolean
   linesCount: number
   overlayDismissed: boolean
+  partial: string | null
 }): ViewerControls {
   const joined = joinStatus === 'joined'
   const ended = joined && state === 'ended'
@@ -38,11 +43,13 @@ export function viewerControls({
   // earlier visit mean it has recorded before.
   let waiting: Waiting = 'none'
   if (joined && state === 'paused') waiting = seenRecording || linesCount > 0 ? 'paused' : 'not_started'
+  const showSpeaking = joined && state === 'recording' && speaking
   return {
     overlay: overlayDismissed ? 'none' : waiting,
     statusBar: overlayDismissed ? waiting : 'none',
     showEndedNotice: ended,
-    showSpeaking: joined && state === 'recording' && speaking,
+    showSpeaking,
+    speakingText: showSpeaking ? partial : null,
     languageLocked: !joined || ended,
     listenAvailable: joined && !ended,
     perLinePlay: ended ? 'cached_only' : 'all',

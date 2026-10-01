@@ -43,8 +43,10 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
   const {
     joinStatus,
     title,
+    sourceLanguage,
     state,
     speaking,
+    partial,
     seenRecording,
     lines,
     targetLanguage,
@@ -68,10 +70,15 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
     seenRecording,
     linesCount: lines.length,
     overlayDismissed,
+    partial,
   })
   const notice = useRecordingNotice(state, seenRecording || lines.length > 0)
   const transcriptText = buildLiveTranscriptText(lines)
-  const { unseen, pinned, jumpToLatest } = useStickToBottom(lines.length, controls.showSpeaking)
+  // The bubble grows as the sentence does (KAN-88) - followed like a line.
+  const { unseen, pinned, jumpToLatest } = useStickToBottom(
+    lines.length,
+    controls.speakingText ?? controls.showSpeaking,
+  )
   const jump = jumpControl({ pinned, unseen })
   // The line whose Play was tapped before its audio existed yet - played
   // automatically once audio_ready arrives, so that first tap isn't just
@@ -293,7 +300,7 @@ function ViewLiveSessionPageContent({ shareToken }: { shareToken: string }) {
                 </article>
               )
             })}
-            {controls.showSpeaking && <SpeakingBubble />}
+            {controls.showSpeaking && <SpeakingBubble text={controls.speakingText} language={sourceLanguage} />}
             {joinStatus === 'joining' && <p className="text-sm text-muted">Connecting…</p>}
             {joinStatus === 'joined' && state === 'recording' && lines.length === 0 && !speaking && (
               <p className="text-sm text-muted">Nothing said yet.</p>
@@ -450,23 +457,42 @@ function RecordingToast({ kind }: { kind: RecordingNotice }) {
   )
 }
 
-// KAN-65: shown while the owner is mid-sentence - viewers only ever get
-// committed, translated lines, so without it the screen just sits still
-// until the whole sentence lands.
-function SpeakingBubble() {
+// KAN-65: shown while the owner is mid-sentence, so the screen doesn't sit
+// still until the whole translated line lands. KAN-88: once text arrives it
+// shows the sentence as it's said - in the speaker's language, untranslated
+// (no extra DeepL cost), muted and italic so it reads as provisional; the
+// translated line replaces it.
+function SpeakingBubble({ text, language }: { text: string | null; language: string | null }) {
+  if (text === null) {
+    return (
+      <div
+        role="status"
+        aria-label="The speaker is talking"
+        className="flex w-fit items-center gap-1 rounded-xl border border-line bg-surface px-4 py-3"
+      >
+        {[0, 150, 300].map((delay) => (
+          <span
+            key={delay}
+            className="h-2 w-2 rounded-full bg-accent-400 motion-safe:animate-bounce"
+            style={{ animationDelay: `${delay}ms` }}
+          />
+        ))}
+      </div>
+    )
+  }
   return (
-    <div
-      role="status"
-      aria-label="The speaker is talking"
-      className="flex w-fit items-center gap-1 rounded-xl border border-line bg-surface px-4 py-3"
-    >
-      {[0, 150, 300].map((delay) => (
-        <span
-          key={delay}
-          className="h-2 w-2 rounded-full bg-accent-400 motion-safe:animate-bounce"
-          style={{ animationDelay: `${delay}ms` }}
-        />
-      ))}
+    // Not a live region: it changes several times a second, which a screen
+    // reader would read out word by word - the translated line that
+    // replaces it is what matters.
+    <div className="flex items-start gap-2 rounded-xl border border-dashed border-line bg-surface/60 px-4 py-3">
+      <p className="flex-1 text-lg italic leading-relaxed text-muted">{text}</p>
+      {/* No source language on an auto-detect session: say what it is anyway. */}
+      <span
+        title={`Original${language ? `, in ${languageName(language)}` : ''} - the translation follows`}
+        className="mt-1.5 shrink-0 rounded bg-subtle px-1.5 py-0.5 text-xs font-medium uppercase text-muted"
+      >
+        {language ?? 'Original'}
+      </span>
     </div>
   )
 }

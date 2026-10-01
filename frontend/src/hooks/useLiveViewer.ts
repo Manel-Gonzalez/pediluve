@@ -21,6 +21,8 @@ export function useLiveViewer(shareToken: string) {
   const [sourceLanguage, setSourceLanguage] = useState<string | null>(null)
   const [state, setState] = useState<LiveState | null>(null)
   const [speaking, setSpeaking] = useState(false)
+  // The sentence in progress, untranslated (KAN-88).
+  const [partial, setPartial] = useState<string | null>(null)
   // Ever seen 'recording' - tells "not started yet" from "paused" (KAN-80).
   const [seenRecording, setSeenRecording] = useState(false)
   const [lines, setLines] = useState<LiveLineData[]>([])
@@ -71,6 +73,7 @@ export function useLiveViewer(shareToken: string) {
         setState(data.state)
         if (data.state === 'recording') setSeenRecording(true)
         setSpeaking(data.speaking)
+        setPartial(data.partial)
         setLines(data.lines)
         setJoinStatus('joined')
         return
@@ -92,6 +95,10 @@ export function useLiveViewer(shareToken: string) {
       }
       if (data.type === 'live_speaking') {
         setSpeaking(data.speaking)
+        return
+      }
+      if (data.type === 'live_partial') {
+        setPartial(data.text)
         return
       }
       if (data.type === 'audio_ready') {
@@ -159,6 +166,7 @@ export function useLiveViewer(shareToken: string) {
     sourceLanguage,
     state,
     speaking,
+    partial,
     seenRecording,
     lines,
     targetLanguage,

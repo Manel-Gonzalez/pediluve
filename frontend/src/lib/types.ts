@@ -175,6 +175,8 @@ export type LiveJoinedMessage = {
   state: LiveState
   // Whether the owner is mid-sentence right now (KAN-65).
   speaking: boolean
+  // The sentence in progress, untranslated (KAN-88).
+  partial: string | null
   lines: LiveLineData[]
 }
 
@@ -205,6 +207,15 @@ export type LiveSpeakingMessage = {
   speaking: boolean
 }
 
+// KAN-88: the sentence the owner is saying right now, in the owner's own
+// language (never translated). Throttled to a few per second; null clears
+// it, sent just before its translated live_line (or when it was noise, or
+// recording paused).
+export type LivePartialMessage = {
+  type: 'live_partial'
+  text: string | null
+}
+
 export type AudioReadyMessage = {
   type: 'audio_ready'
   index: number
@@ -225,6 +236,7 @@ export type ViewerServerMessage =
   | LiveLinesRetranslatedMessage
   | LiveStatusMessage
   | LiveSpeakingMessage
+  | LivePartialMessage
   | AudioReadyMessage
   | AudioFailedMessage
   | ErrorMessage
