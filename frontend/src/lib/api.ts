@@ -6,21 +6,19 @@ import type {
   TranslateResponse,
 } from './types'
 
-// Backend's dev port (uvicorn). Not configurable separately from
-// VITE_WS_URL/VITE_API_URL - set one of those instead if it ever needs to
-// differ from the frontend's own host.
-const BACKEND_PORT = '8000'
+// Where the page is served from when there's no window (tests, SSR-style
+// contexts) - the Vite dev server.
+const FALLBACK_HOST = 'localhost:5173'
 
-type LocationLike = { hostname: string; protocol: string }
+type LocationLike = { host: string; protocol: string }
 
-// A guest opening the QR/share link on their own phone loads the frontend
-// from this machine's LAN IP, not "localhost" - "localhost" on their phone
-// means their phone. Deriving the backend host from the page's own location
-// (falling back to it) means the same build works for both the owner
-// (https://localhost:5173) and a LAN guest (http://192.168.x.x:5173)
-// without an env var per device. VITE_WS_URL/VITE_API_URL still win when
-// set, for anything this heuristic can't handle (a reverse proxy, a
-// different backend host entirely).
+// KAN-66: the browser only ever talks to the page's own origin. The Vite
+// dev server proxies /api and /ws to the backend (see vite.config.ts), so
+// the same build works for the owner on localhost, a guest on the LAN
+// (http://192.168.x.x:5173) and anyone reaching it through an https tunnel
+// - with no backend port to expose and no CORS origins to list for them.
+// VITE_WS_URL/VITE_API_URL still win when set, for a backend that isn't
+// behind that proxy.
 //
 // `location` is injectable (rather than always reading `window.location`
 // directly) so getApiUrl/getWebSocketUrl stay plain, unit-testable
@@ -30,11 +28,15 @@ function currentLocation(): LocationLike | undefined {
   return typeof window !== 'undefined' ? window.location : undefined
 }
 
+function sameOrigin(location: LocationLike | undefined, scheme: 'http' | 'ws'): string {
+  const secure = location?.protocol === 'https:'
+  const protocol = scheme === 'ws' ? (secure ? 'wss' : 'ws') : secure ? 'https' : 'http'
+  return `${protocol}://${location?.host || FALLBACK_HOST}`
+}
+
 export function getWebSocketUrl(location: LocationLike | undefined = currentLocation()): string {
   if (import.meta.env.VITE_WS_URL) return import.meta.env.VITE_WS_URL
-  const protocol = location?.protocol === 'https:' ? 'wss' : 'ws'
-  const host = location?.hostname || 'localhost'
-  return `${protocol}://${host}:${BACKEND_PORT}/ws`
+  return `${sameOrigin(location, 'ws')}/ws`
 }
 
 // The anonymous viewer counterpart to getWebSocketUrl (backend's /ws/view,
@@ -44,9 +46,7 @@ export function getViewerWebSocketUrl(
   location: LocationLike | undefined = currentLocation(),
 ): string {
   if (import.meta.env.VITE_WS_URL) return import.meta.env.VITE_WS_URL.replace(/\/ws$/, '/ws/view')
-  const protocol = location?.protocol === 'https:' ? 'wss' : 'ws'
-  const host = location?.hostname || 'localhost'
-  return `${protocol}://${host}:${BACKEND_PORT}/ws/view`
+  return `${sameOrigin(location, 'ws')}/ws/view`
 }
 
 export function getChunkDurationMs(): number {
@@ -55,9 +55,7 @@ export function getChunkDurationMs(): number {
 
 export function getApiUrl(location: LocationLike | undefined = currentLocation()): string {
   if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL
-  const protocol = location?.protocol === 'https:' ? 'https' : 'http'
-  const host = location?.hostname || 'localhost'
-  return `${protocol}://${host}:${BACKEND_PORT}`
+  return sameOrigin(location, 'http')
 }
 
 // Carries the HTTP status alongside FastAPI's `detail` message, so callers

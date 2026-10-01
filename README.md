@@ -119,16 +119,13 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp ../.env.example .env   # fill in your keys (ElevenLabs, DeepL, Supabase URL + anon key)
 python -m pytest          # optional: backend test suite
-uvicorn main:app --reload --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 3
+uvicorn main:app --reload --port 8000 --timeout-graceful-shutdown 3
 ```
 
-`--host 0.0.0.0` (not just `localhost`) so a phone on the same Wi-Fi can reach the backend too -
-needed for the QR live viewer (KAN-50): the mic-capturing owner needs a secure context, so keep
-recording on `http://localhost:5173`, but the anonymous viewer opens the share link at your
-machine's LAN IP instead. Add that LAN origin (e.g. `http://192.168.1.42:5173`) to `CORS_ORIGINS`
-in `backend/.env` alongside `http://localhost:5173` - full origins, scheme and port included, or
-the CORS preflight is rejected. uvicorn doesn't reload `.env` on `--reload`: restart it after
-editing that file.
+The browser never calls the backend directly: the Vite dev server proxies `/api` and `/ws` to it
+(`frontend/vite.config.ts`), so uvicorn only has to listen on `localhost`, and phones on the LAN or
+through a tunnel need nothing from it. uvicorn doesn't reload `.env` on `--reload`: restart it
+after editing that file.
 
 ElevenLabs: the API key needs both the Speech to Text and Text to Speech permissions, and on the
 free plan `ELEVENLABS_VOICE_ID` must be one of the default voices (Voice Library voices return 402
@@ -149,17 +146,33 @@ npm run dev   # http://localhost:5173
 npm test      # optional: frontend test suite
 ```
 
-For the QR live viewer, set `VITE_SHARE_BASE_URL` in `frontend/.env` to your machine's LAN origin
-(e.g. `http://192.168.1.42:5173`) and keep using `http://localhost:5173` yourself. The browser only
-allows mic capture on `localhost` or https, so the owner can't record from the LAN address, and
-a QR code built from `localhost` would point the phone at itself. The phone must be on the same
-Wi-Fi; nothing here is reachable from outside your network.
+For the QR live viewer on your Wi-Fi, set `VITE_SHARE_BASE_URL` in `frontend/.env` to your
+machine's LAN origin (e.g. `http://192.168.1.42:5173`) and keep using `http://localhost:5173`
+yourself. The browser only allows mic capture on `localhost` or https, so the owner can't record
+from the LAN address, and a QR code built from `localhost` would point the phone at itself.
 
 Open `http://localhost:5173`, register an account (redirects to `/login` automatically until you
 do), click **New session** on the home page and give it a name, then start recording on its live
 view. Pause and resume as needed; **End session** returns you to the home page, where the session
 now appears in the list — click it to revisit its full transcript, or use the row's Rename/Delete
 actions.
+
+### Public demo through a temporary tunnel (optional)
+
+To let someone outside your network follow a session (e.g. on mobile data), expose the frontend
+through a [Cloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)
+while the demo runs. This is not a deployment: nothing leaves your machine, and the URL dies with
+the command.
+
+1. Install `cloudflared` once (Windows: `winget install --id Cloudflare.cloudflared`).
+2. Run the backend and frontend as above, then in a third terminal:
+   `cloudflared tunnel --url http://localhost:5173`
+3. Open the `https://<random>.trycloudflare.com` URL it prints and sign in there. It's https, so
+   the mic works from any device, and the QR code carries that URL automatically.
+
+While the tunnel is up, anyone with the URL can reach the app, and sign-up is open while ElevenLabs
+and DeepL are paid per use. Before a demo, turn off Supabase's **"Allow new users to sign
+up"** setting (under Authentication). Stop the tunnel (Ctrl+C) as soon as the demo is over.
 
 ## Decisions log
 
