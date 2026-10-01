@@ -8,9 +8,11 @@ Pédiluve transcribes speech as you talk, translates each sentence, and shares t
 QR code. Anyone who scans it follows along in the language they pick, with no account and no app to
 install, and can have each new line read aloud as it arrives.
 
+<!-- Demo GIF goes here once recorded (docs/media/demo.gif, KAN-72):
 <p align="center">
   <img src="docs/media/demo.gif" alt="Speaking on a laptop while a phone shows each sentence translated live" width="800">
 </p>
+-->
 
 ## What it does
 
@@ -24,6 +26,7 @@ install, and can have each new line read aloud as it arrives.
 - **Keep it**: sessions are saved per account, with history, rename/delete, re-translation into
   another language, and a `.txt` download. A signed-in listener can add a session to their own list.
 
+<!-- Screenshots go here once recorded (docs/media/owner.png, viewer.png, history.png, KAN-72):
 <table>
   <tr>
     <td align="center"><img src="docs/media/owner.png" alt="Owner's live view with the QR code" width="420"><br><sub>Speaker: live transcript + QR code</sub></td>
@@ -31,6 +34,7 @@ install, and can have each new line read aloud as it arrives.
     <td align="center"><img src="docs/media/history.png" alt="A saved session's transcript" width="420"><br><sub>History: every session, re-translatable</sub></td>
   </tr>
 </table>
+-->
 
 ## Technical highlights
 
