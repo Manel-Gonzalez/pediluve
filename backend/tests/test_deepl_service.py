@@ -42,6 +42,13 @@ async def test_translate_returns_the_translated_text(fake_transport):
     assert result == "hola"
 
 
+@pytest.mark.parametrize("code, deepl_code", [("ro", b"RO"), ("nl", b"NL")])
+async def test_romanian_and_dutch_are_supported_targets(fake_transport, code, deepl_code):
+    assert code in deepl.SUPPORTED_TARGET_LANGUAGES
+    await deepl.translate("hello", code)
+    assert b"target_lang=" + deepl_code in fake_transport.requests[0].content
+
+
 async def test_translate_maps_ui_language_codes_to_deepl_codes(fake_transport):
     await deepl.translate("hello", "en")
     sent = fake_transport.requests[0]

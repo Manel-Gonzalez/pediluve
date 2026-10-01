@@ -8,6 +8,8 @@ describe('languageName', () => {
     expect(languageName('en')).toBe('English')
     expect(languageName('fr')).toBe('French')
     expect(languageName('de')).toBe('German')
+    expect(languageName('ro')).toBe('Romanian')
+    expect(languageName('nl')).toBe('Dutch')
   })
 
   it('falls back to the code itself when it isn\'t a language', () => {

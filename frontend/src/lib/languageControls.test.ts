@@ -9,7 +9,7 @@ import {
 
 describe('SUPPORTED_LANGUAGES', () => {
   it('matches the DeepL-supported candidate set from CLAUDE.md', () => {
-    expect(SUPPORTED_LANGUAGES).toEqual(['es', 'ca', 'en', 'fr', 'de'])
+    expect(SUPPORTED_LANGUAGES).toEqual(['es', 'ca', 'en', 'fr', 'de', 'ro', 'nl'])
   })
 })
 
