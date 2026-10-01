@@ -44,6 +44,8 @@ class LiveJoined(BaseModel):
     state: str
     # Whether the owner is mid-sentence right now (KAN-65) - see LiveSpeaking.
     speaking: bool
+    # The sentence in progress, untranslated (KAN-88) - see LivePartial.
+    partial: str | None = None
     lines: list[LiveLineOut]
 
 
@@ -71,11 +73,22 @@ class LiveStatus(BaseModel):
 
 class LiveSpeaking(BaseModel):
     # KAN-65: the owner started a sentence (true) or it was committed, turned
-    # out to be noise, or recording paused (false). Viewers only see
-    # committed lines, so this is their cue that one is on its way. Sent
-    # only on a change, in order with live_line (services/live_rooms.py).
+    # out to be noise, or recording paused (false) - the viewers' cue that a
+    # translated line is on its way (LivePartial carries its untranslated
+    # text). Sent only on a change, in order with live_line
+    # (services/live_rooms.py).
     type: Literal["live_speaking"] = "live_speaking"
     speaking: bool
+
+
+class LivePartial(BaseModel):
+    # KAN-88: the sentence the owner is saying right now, in the owner's own
+    # language - never translated, so it costs no DeepL call. Throttled and
+    # coalesced to the latest text; null clears it (the line was committed,
+    # it was noise, or recording paused). In order with live_line and
+    # live_speaking (services/live_rooms.py).
+    type: Literal["live_partial"] = "live_partial"
+    text: str | None
 
 
 class AudioReady(BaseModel):

@@ -75,6 +75,7 @@ def test_join_live_with_a_known_token_returns_room_state_and_lines():
             "target_language": "fr",
             "state": "paused",
             "speaking": False,
+            "partial": None,
             "lines": [{"index": 0, "original_text": "hola", "translated_text": "salut"}],
         }
 
@@ -85,6 +86,17 @@ def test_join_live_mid_sentence_reports_that_the_owner_is_speaking():
 
     with _joined_viewer(share_token, "fr") as (_ws, joined):
         assert joined["speaking"] is True
+
+
+def test_join_live_mid_sentence_includes_the_sentence_in_progress():
+    # KAN-88: a viewer arriving mid-sentence sees it right away, rather than
+    # only from the owner's next partial update.
+    share_token, room = _make_room()
+    room.speaking = True
+    room.partial = "hola a to"
+
+    with _joined_viewer(share_token, "fr") as (_ws, joined):
+        assert joined["partial"] == "hola a to"
 
 
 def test_join_live_translates_missing_lines_for_the_requested_language():

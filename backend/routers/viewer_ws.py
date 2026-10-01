@@ -119,6 +119,7 @@ class ViewerConnectionHandler:
                 target_language=request.target_language,
                 state=room.state,
                 speaking=room.speaking,
+                partial=room.partial,
                 lines=[LiveLineOut(**line) for line in room.snapshot(request.target_language)],
             ).model_dump()
         )

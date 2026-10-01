@@ -399,3 +399,117 @@ async def test_speaking_updates_stay_in_order_with_lines():
         ("live_line", None),
         ("live_speaking", False),
     ]
+
+
+# KAN-88: the sentence in progress, untranslated, instead of just the dots.
+
+
+def _partials(viewer: FakeViewer) -> list:
+    return [m["text"] for m in viewer.received if m["type"] == "live_partial"]
+
+
+async def test_a_partial_reaches_viewers_untranslated():
+    room = LiveRoom(session_id="s1", title=None, source_language="es")
+    room.start_worker()
+    viewer = FakeViewer()
+    room.add_viewer(viewer, "fr")
+
+    room.publish_speaking(True)
+    room.publish_partial("hola a to")
+    await _drain(room)
+    await room.stop_worker()
+
+    assert _partials(viewer) == ["hola a to"]
+    assert room.partial == "hola a to"
+
+
+async def test_rapid_partials_are_coalesced_to_the_latest(monkeypatch):
+    # ElevenLabs revises the sentence several times a second; viewers get at
+    # most one update per interval, always the newest text, never a backlog.
+    monkeypatch.setattr(live_rooms, "_PARTIAL_INTERVAL_SECONDS", 0.05)
+    room = LiveRoom(session_id="s1", title=None, source_language="es")
+    room.start_worker()
+    viewer = FakeViewer()
+    room.add_viewer(viewer, "fr")
+
+    room.publish_partial("ho")
+    room.publish_partial("hola")
+    room.publish_partial("hola a")
+    room.publish_partial("hola a todos")
+    await asyncio.sleep(0.1)
+    await _drain(room)
+    await room.stop_worker()
+
+    assert _partials(viewer) == ["ho", "hola a todos"]
+
+
+async def test_the_committed_line_clears_the_partial():
+    room = LiveRoom(session_id="s1", title=None, source_language="es")
+    room.start_worker()
+    viewer = FakeViewer()
+    room.add_viewer(viewer, "fr")
+
+    room.publish_partial("hola a todos")
+    room.publish("hola a todos", None, None)
+    await _drain(room)
+    await room.stop_worker()
+
+    assert [(m["type"], m.get("text")) for m in viewer.received] == [
+        ("live_partial", "hola a todos"),
+        ("live_partial", None),
+        ("live_line", None),
+    ]
+    assert room.partial is None
+
+
+async def test_a_partial_pending_when_the_line_is_committed_is_dropped(monkeypatch):
+    # A throttled update still waiting to go out belongs to the sentence just
+    # committed - sending it after the line would show stale text.
+    monkeypatch.setattr(live_rooms, "_PARTIAL_INTERVAL_SECONDS", 0.05)
+    room = LiveRoom(session_id="s1", title=None, source_language="es")
+    room.start_worker()
+    viewer = FakeViewer()
+    room.add_viewer(viewer, "fr")
+
+    room.publish_partial("hola")
+    room.publish_partial("hola a todos")  # throttled, still pending
+    room.publish("hola a todos", None, None)
+    await asyncio.sleep(0.1)
+    await _drain(room)
+    await room.stop_worker()
+
+    assert _partials(viewer) == ["hola", None]
+
+
+async def test_stopping_speaking_clears_the_partial():
+    # A segment that turned out to be noise, or a pause mid-sentence: no line
+    # will come, so the stopped-speaking update is what clears it.
+    room = LiveRoom(session_id="s1", title=None, source_language="es")
+    room.start_worker()
+    viewer = FakeViewer()
+    room.add_viewer(viewer, "fr")
+
+    room.publish_speaking(True)
+    room.publish_partial("ehm")
+    room.publish_speaking(False)
+    await _drain(room)
+    await room.stop_worker()
+
+    assert _partials(viewer) == ["ehm", None]
+    assert room.partial is None
+
+
+async def test_an_unchanged_partial_is_not_sent_again(monkeypatch):
+    monkeypatch.setattr(live_rooms, "_PARTIAL_INTERVAL_SECONDS", 0)
+    room = LiveRoom(session_id="s1", title=None, source_language="es")
+    room.start_worker()
+    viewer = FakeViewer()
+    room.add_viewer(viewer, "fr")
+
+    room.publish_partial("hola")
+    await _drain(room)
+    room.publish_partial("hola")
+    await _drain(room)
+    await room.stop_worker()
+
+    assert _partials(viewer) == ["hola"]
