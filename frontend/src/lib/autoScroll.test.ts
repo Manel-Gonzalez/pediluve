@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isNearBottom, unseenCount } from './autoScroll'
+import { isNearBottom, jumpControl, unseenCount } from './autoScroll'
 
 describe('isNearBottom', () => {
   const view = { clientHeight: 800, scrollHeight: 2000 }
@@ -35,5 +35,19 @@ describe('unseenCount', () => {
   it('ignores the list shrinking (a language switch rebuilds it)', () => {
     expect(unseenCount(1, 7, 7, false)).toBe(1)
     expect(unseenCount(1, 7, 3, false)).toBe(1)
+  })
+})
+
+describe('jumpControl', () => {
+  it('stays hidden while following the latest line', () => {
+    expect(jumpControl({ pinned: true, unseen: 0 })).toBe('hidden')
+  })
+
+  it('offers a plain arrow once the reader scrolled up, even with nothing new', () => {
+    expect(jumpControl({ pinned: false, unseen: 0 })).toBe('arrow')
+  })
+
+  it('shows the count once lines arrived while scrolled up', () => {
+    expect(jumpControl({ pinned: false, unseen: 3 })).toBe('count')
   })
 })
