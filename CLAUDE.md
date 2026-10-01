@@ -284,6 +284,11 @@ memory by `GET /api/live-audio/{token}`; the Storage upload and `message_audio` 
 background. WebSocket contract unchanged. On `feature/KAN-87` (branched from `feature/KAN-86`).
 Backend tests (`pytest`, 291) passing.
 
+KAN-88 — viewers see the speaker's sentence in progress, untranslated (no DeepL cost), in place of
+the dots, until the translated line replaces it. New `live_partial {text}` message and
+`live_joined.partial` (contract change approved). On `feature/KAN-88` (branched from
+`feature/KAN-87`). Backend (`pytest`, 299) and frontend (`vitest`, 157) tests passing.
+
 Next: record the README demo GIF and screenshots. KAN-71 (owner-reload grace period) is the one
 parked follow-up. Phase 6 stays parked - start with its spike (see Phase gates) only if a real
 multi-mic use case shows up.
