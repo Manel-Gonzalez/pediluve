@@ -586,6 +586,22 @@ Linear, Raycast, Granola, and Apple Live Captions for the viewer.
   doesn't cancel it for the rest. A failure isn't remembered, so the next request tries again.
   The rejected alternative was an UPDATE policy: it would stop the error but still pay for every
   duplicate call. In-process is enough because every room lives in this one uvicorn process.
+- **A fresh clip goes out before it's cached (KAN-87).** A cache miss used to run synthesize →
+  Storage upload → `message_audio` row → sign → `audio_ready` in sequence. Only the first step
+  matters to the listener; the rest just makes the next request a hit. A miss now replies as
+  soon as ElevenLabs returns, with a URL the backend serves from memory
+  (`services/live_audio.py`, `GET /api/live-audio/{token}`), and caches in the background. That
+  saves three Supabase round trips and the listener's download from Storage.
+  - **Contract:** the WebSocket messages don't change: `audio_url` is still a URL, now relative
+    and same-origin, so it goes through the Vite proxy on localhost, the LAN and the tunnel.
+  - **Store:** unguessable tokens, the same model as a signed URL. A 1 h lifetime like the signed
+    URLs, and capped at the latest 500 clips.
+  - **Range support:** iOS Safari only plays media from servers that answer it with 206.
+  - **In-flight entry:** it stays until the row is saved, not just until the clip is ready, so a
+    request in that gap doesn't pay for a second synthesis.
+  - **A failed upload** is logged and costs only a future cache hit.
+  - **Rejected alternative:** base64 audio inside `audio_ready`. It would have changed the
+    WebSocket contract, and bloated every message.
 - **Every animation behind `motion-safe:`**, including the recording ping, the speaking dots, the
   login hero's waveform and the smooth auto-scroll.
 

@@ -2,12 +2,26 @@ import asyncio
 
 import pytest
 
-from services import tts_cache
+from services import live_audio, tts_cache
 from services.auth import AuthenticatedUser
+from services.live_audio import LiveAudioStore
 
 
 def user():
     return AuthenticatedUser(id="owner-1", email="a@example.com", access_token="tok-a")
+
+
+SIGNED = "https://signed.example/owner-1/session-1/message-1.{}.mp3"
+
+
+async def settle():
+    # Waits for the background upload + message_audio row (KAN-87).
+    await asyncio.gather(*list(tts_cache._background), return_exceptions=True)
+
+
+def live_clip(url):
+    assert url.startswith("/api/live-audio/")
+    return live_audio.store.get(url.removeprefix("/api/live-audio/"))
 
 
 @pytest.fixture
@@ -40,13 +54,18 @@ def fake_backends(monkeypatch):
     monkeypatch.setattr("services.tts_cache.elevenlabs.synthesize", fake_synthesize)
     monkeypatch.setattr("services.tts_cache.storage.upload_audio", fake_upload_audio)
     monkeypatch.setattr("services.tts_cache.storage.get_signed_url", fake_get_signed_url)
+    monkeypatch.setattr("services.tts_cache.live_audio.store", LiveAudioStore())
 
     return calls
 
 
-async def test_a_cache_miss_synthesizes_uploads_and_caches(fake_backends):
+async def test_a_cache_miss_answers_with_the_fresh_clip_and_caches_it_in_the_background(fake_backends):
     url, cached = await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "fr")
 
+    # KAN-87: served straight from the backend, not a signed Storage URL.
+    assert live_clip(url) == b"audio-bytes"
+    assert cached is False
+    await settle()
     assert fake_backends["synthesize"] == ["hola"]
     assert fake_backends["upload_audio"] == [("owner-1/session-1/message-1.fr.mp3", b"audio-bytes")]
     assert fake_backends["create_message_audio"] == [
@@ -56,23 +75,80 @@ async def test_a_cache_miss_synthesizes_uploads_and_caches(fake_backends):
             "storage_path": "owner-1/session-1/message-1.fr.mp3",
         }
     ]
-    assert url == "https://signed.example/owner-1/session-1/message-1.fr.mp3"
-    assert cached is False
+    # The listener never waits on a Storage sign for a fresh clip.
+    assert fake_backends["get_signed_url"] == []
+
+
+async def test_a_miss_answers_before_the_upload_finishes(fake_backends, monkeypatch):
+    release = asyncio.Event()
+
+    async def slow_upload(user, storage_path, audio_bytes):
+        await release.wait()
+        fake_backends["upload_audio"].append((storage_path, audio_bytes))
+
+    monkeypatch.setattr("services.tts_cache.storage.upload_audio", slow_upload)
+
+    url, _ = await asyncio.wait_for(
+        tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "es"), timeout=1
+    )
+    assert live_clip(url) == b"audio-bytes"
+    assert fake_backends["upload_audio"] == []
+
+    release.set()
+    await settle()
+    assert len(fake_backends["upload_audio"]) == 1
+    assert len(fake_backends["create_message_audio"]) == 1
+
+
+async def test_a_request_while_the_upload_is_still_running_reuses_the_same_clip(fake_backends, monkeypatch):
+    # Between "clip ready" and "row saved" the cache still misses - without
+    # the in-flight entry staying until the row exists, this would pay for a
+    # second synthesis.
+    release = asyncio.Event()
+
+    async def slow_upload(user, storage_path, audio_bytes):
+        await release.wait()
+
+    monkeypatch.setattr("services.tts_cache.storage.upload_audio", slow_upload)
+
+    first, _ = await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "es")
+    second, _ = await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "es")
+    release.set()
+    await settle()
+
+    assert first == second
+    assert fake_backends["synthesize"] == ["hola"]
+
+
+async def test_a_failed_background_upload_is_logged_and_the_clip_still_plays(fake_backends, monkeypatch, caplog):
+    async def failing_upload(user, storage_path, audio_bytes):
+        raise RuntimeError("Storage is down")
+
+    monkeypatch.setattr("services.tts_cache.storage.upload_audio", failing_upload)
+
+    url, _ = await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "es")
+    await settle()
+
+    assert live_clip(url) == b"audio-bytes"
+    assert fake_backends["create_message_audio"] == []
+    assert "Could not cache audio for message message-1 (es)" in caplog.text
 
 
 async def test_a_cache_hit_never_calls_synthesize_or_upload_again(fake_backends):
     await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "fr")
+    await settle()
     url, cached = await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "fr")
 
     assert fake_backends["synthesize"] == ["hola"]
     assert fake_backends["upload_audio"] == [("owner-1/session-1/message-1.fr.mp3", b"audio-bytes")]
-    assert url == "https://signed.example/owner-1/session-1/message-1.fr.mp3"
+    assert url == SIGNED.format("fr")
     assert cached is True
 
 
 async def test_different_languages_for_the_same_message_are_cached_separately(fake_backends):
     await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "fr")
     await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "de")
+    await settle()
 
     assert fake_backends["synthesize"] == ["hola", "hola"]
     assert len(fake_backends["create_message_audio"]) == 2
@@ -98,10 +174,12 @@ async def test_concurrent_requests_for_the_same_line_share_one_generation(fake_b
     await asyncio.sleep(0)
     release.set()
     results = await asyncio.gather(first, second)
+    await settle()
 
     assert fake_backends["synthesize"] == ["hola"]
     assert len(fake_backends["upload_audio"]) == 1
-    assert results[0][0] == results[1][0] == "https://signed.example/owner-1/session-1/message-1.es.mp3"
+    assert results[0][0] == results[1][0]
+    assert live_clip(results[0][0]) == b"audio-bytes"
 
 
 async def test_a_failed_generation_is_retried_by_the_next_request(fake_backends, monkeypatch):
@@ -120,7 +198,7 @@ async def test_a_failed_generation_is_retried_by_the_next_request(fake_backends,
     url, cached = await tts_cache.get_or_create_audio_url(user(), "session-1", "message-1", "hola", "es")
 
     assert len(attempts) == 2
-    assert url == "https://signed.example/owner-1/session-1/message-1.es.mp3"
+    assert live_clip(url) == b"audio-bytes"
     assert cached is False
 
 
@@ -141,5 +219,5 @@ async def test_one_requester_going_away_does_not_cancel_the_generation_for_other
     release.set()
 
     url, _ = await stayer
-    assert url == "https://signed.example/owner-1/session-1/message-1.es.mp3"
+    assert live_clip(url) == b"audio-bytes"
     assert fake_backends["synthesize"] == ["hola"]
