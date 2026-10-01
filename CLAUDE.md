@@ -272,6 +272,10 @@ KAN-85 — "Listen from here" on each viewer line: plays from that line to the l
 on live; audio prefetched two lines ahead instead of the whole queue. On `feature/KAN-85` (branched
 from `feature/KAN-84`). Frontend tests (`vitest`, 151) passing.
 
+KAN-86 — viewer "jump to latest" arrow whenever scrolled up (a count once lines arrive), and the
+listening controls moved into the sticky header so they stay reachable on a phone. On
+`feature/KAN-86` (branched from `feature/KAN-85`). Frontend tests (`vitest`, 154) passing.
+
 Next: record the README demo GIF and screenshots. KAN-71 (owner-reload grace period) is the one
 parked follow-up. Phase 6 stays parked - start with its spike (see Phase gates) only if a real
 multi-mic use case shows up.

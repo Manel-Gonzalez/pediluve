@@ -556,6 +556,17 @@ Linear, Raycast, Granola, and Apple Live Captions for the viewer.
   line one of a long session would fire dozens of ElevenLabs calls together. That would spend
   credits on lines the listener may never reach and could hit the plan's concurrency limit.
   `audioToRequest()` asks only for the line playing plus the next two; cached lines cost nothing.
+- **A way back to the latest line that's always there (KAN-86).** The view follows new lines unless
+  the reader scrolled up (KAN-82), but the only way back was the "N new lines" chip, which only
+  appeared once a line arrived; during a pause there was none. Now a round arrow shows as soon as
+  the reader scrolls up, and it becomes the count when lines arrive (`jumpControl()`). Tapping
+  either pins the view again.
+- **The viewer's controls live in the sticky header (KAN-86).** On a phone, Listen live, the
+  language, Save and Download scrolled out of reach down a long transcript. They now sit in a
+  second header row. That costs about 50px of a phone screen, but the header is translucent and
+  these are the page's only actions. Below 380px "Save" goes icon-only, so the language picker
+  keeps its room. When the session ends, the row goes and the ended notice takes its place, in
+  the page as before.
 - **Every animation behind `motion-safe:`**, including the recording ping, the speaking dots, the
   login hero's waveform and the smooth auto-scroll.
 
