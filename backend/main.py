@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from routers.live_audio import router as live_audio_router
 from routers.me import router as me_router
 from routers.sessions import router as sessions_router
 from routers.viewer_ws import router as viewer_ws_router
@@ -28,6 +29,7 @@ app.include_router(ws_router)
 app.include_router(viewer_ws_router)
 app.include_router(me_router)
 app.include_router(sessions_router)
+app.include_router(live_audio_router)
 
 
 @app.get("/health")
